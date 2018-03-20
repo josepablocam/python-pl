@@ -1,5 +1,10 @@
-# A simple not-quite SSA rewriter
-
+# A simple rewriter to produce
+# Pseudo SSA
+# Psuedo SSA rewrites any expression that
+# has non-atomic sub-expressions
+# Some constucts (such as for-statements) only rewrite
+# the branches, but not the entire statement, as there may be dependencies
+# between rewritten body and the test condition, which complicates things
 
 import ast
 from astunparse import unparse
@@ -10,13 +15,18 @@ from copy import deepcopy
 # remove unnecessary deepcopy
 # add tests
 # add documentation
-# fix return types where necessary
 
 
 class PseudoSSA(ast.NodeTransformer):
-    def __init__(self):
+    """
+    Convert python AST to a pseudo-SSA format
+    """
+    def __init__(self, sym_format_name=None):
+        if sym_format_name is None:
+            sym_format_name = '_var%d'
+
         self.variable_counter = 0
-        self.sym_format_name = '_var%d'
+        self.sym_format_name = sym_format_name
         self.atom_types = (
             ast.Name,
             ast.Num,
@@ -29,16 +39,7 @@ class PseudoSSA(ast.NodeTransformer):
         # we ignore certain types where lifting
         # would change the semantics or complicate
         # with little benefit
-        self.ignore_types = (
-        # TODO: for these, we should return a list, not the tuples we return....
-        # statements
-            ast.Delete,
-            ast.Import,
-            ast.ImportFrom,
-            ast.Global,
-            ast.Nonlocal,
-            ast.Pass, ast.Break, ast.Continue,
-        # expressions
+        self.ignore_expr_types = (
             ast.BoolOp,
             ast.Lambda,
             ast.ListComp,
@@ -49,13 +50,25 @@ class PseudoSSA(ast.NodeTransformer):
             ast.Yield,
             ast.YieldFrom,
         )
+        self.ignore_stmt_types = (
+            ast.Delete,
+            ast.Import,
+            ast.ImportFrom,
+            ast.Global,
+            ast.Nonlocal,
+            ast.Pass, ast.Break, ast.Continue,
+        )
+
 
     def is_atomic(self, node):
         # TODO: need to modify this further
         return isinstance(node, self.atom_types) or node is None
 
-    def is_ignorable(self, node):
-        return isinstance(node, self.ignore_types)
+    def is_ignorable_expr(self, node):
+        return isinstance(node, self.ignore_expr_types)
+
+    def is_ignorable_stmt(self, node):
+        return isinstance(node, self.ignore_stmt_types)
 
     def ignore(self, node):
         return [], node
@@ -106,7 +119,9 @@ class PseudoSSA(ast.NodeTransformer):
         return new_nodes
 
     def visit(self, node):
-        if self.is_ignorable(node):
+        if self.is_ignorable_stmt(node):
+            return node
+        elif self.is_ignorable_expr(node):
             return self.ignore(node)
         elif self.is_atomic(node):
             return self.ignore(node)
@@ -310,21 +325,21 @@ class PseudoSSA(ast.NodeTransformer):
         arg_nodes = self.lift_list(node.args)
         assignments.extend(arg_nodes[0])
         new_node.args = arg_nodes[1]
-        
+
         kw_nodes = self.lift_list(node.keywords)
         assignments.extend(kw_nodes[0])
         new_node.keywords = kw_nodes[1]
 
         return assignments, new_node
-        
+
     def visit_keyword(self, node):
         new_node = deepcopy(node)
         assignments = []
-        
+
         value_nodes = self.lift(node.value)
         assignments.extend(value_nodes[0])
         new_node.value = value_nodes[1]
-        
+
         return assignments, new_node
 
     def visit_JoinedStr(self, node):
@@ -344,7 +359,7 @@ class PseudoSSA(ast.NodeTransformer):
         value_nodes = self.lift(node.value)
         assignments.extend(value_nodes[0])
         new_node.value = value_nodes[1]
-        
+
         return assignments, new_node
 
     def visit_Subscript(self, node):
@@ -424,51 +439,52 @@ class PseudoSSA(ast.NodeTransformer):
         new_node.values = values_nodes[1]
 
         return assignments, new_node
-        
+
     def visit_Slice(self, node):
         new_node = deepcopy(node)
         assignments = []
-        
+
         lower_nodes = self.lift(node.lower)
         assignments.extend(lower_nodes[0])
         new_node.lower = lower_nodes[1]
-    
+
         upper_nodes = self.lift(node.upper)
         assignments.extend(upper_nodes[0])
         new_node.upper = upper_nodes[1]
-            
+
         step_nodes = self.lift(node.step)
         assignments.extend(step_nodes[0])
         new_node.step = step_nodes[1]
-        
+
         return assignments, new_node
-            
+
     def visit_ExtSlice(self, node):
         new_node = deepcopy(node)
         assignments = []
-        
+
         dims_nodes = self.lift_list(node.dims)
         assignments.extend(dims_nodes[0])
         new_node.dims = dims_nodes[1]
-        
+
         return assignments, new_node
-        
+
     def visit_FormattedValue(self, node):
         new_node = deepcopy(node)
         assignments = []
-        
+
         value_nodes = self.lift(node.value)
         assignments.extend(value_nodes[0])
         new_node.value = value_nodes[1]
-            
+
         return assignments, new_node
 
 
-def run(src):
-    tree = ast.parse(src)
-    other = PseudoSSA().visit(deepcopy(tree))
-    print(unparse(other))
-    return tree, other
+def pseudo_ssa(tree):
+    if not isinstance(tree, ast.Module):
+        tree = ast.parse(tree)
+    else:
+        tree = deepcopy(tree)
+    return PseudoSSA().visit(tree)
 
 
 
