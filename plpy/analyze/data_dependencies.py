@@ -194,6 +194,12 @@ class DataDependenciesConstructor(ast.NodeVisitor):
         edges = [(dep, expr_id) for dep in depends_on]
         self.graph.add_edges_from(edges)
 
+    def visit_Return(self, node):
+        return_id = self.create_node(node)
+        depends_on = self.extract_dependence_ids(node.value)
+        edges = [(dep, return_id) for dep in depends_on]
+        self.graph.add_edges_from(edges)
+
     def visit_FunctionDef(self, node):
         self.push_context(node)
 
