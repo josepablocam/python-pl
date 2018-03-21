@@ -1,1 +1,1 @@
-from .ssa import pseudo_ssa
+from .expr_lifter import lift_expressions

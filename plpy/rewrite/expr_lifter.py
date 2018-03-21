@@ -1,14 +1,13 @@
-# A simple rewriter to produce
-# Pseudo SSA
-# Psuedo SSA rewrites any expression that
-# has non-atomic sub-expressions
+# A simple rewriter to produce a source that eliminates
+# (most) non-atomic sub-expressions
 # Some constucts (such as for-statements) only rewrite
 # the branches, but not the entire statement, as there may be dependencies
 # between rewritten body and the test condition, which complicates things
 
 import ast
-from astunparse import unparse
 from copy import deepcopy
+
+from astunparse import unparse
 
 
 # TODO:
@@ -17,9 +16,10 @@ from copy import deepcopy
 # add documentation
 
 
-class PseudoSSA(ast.NodeTransformer):
+class ExpressionLifter(ast.NodeTransformer):
     """
-    Convert python AST to a pseudo-SSA format
+    Convert python AST to lift nested expression such that
+    any subexpression is now atomic (unless one of the ignored AST node types)
     """
     def __init__(self, sym_format_name=None):
         if sym_format_name is None:
@@ -479,12 +479,12 @@ class PseudoSSA(ast.NodeTransformer):
         return assignments, new_node
 
 
-def pseudo_ssa(tree):
+def lift_expressions(tree):
     if not isinstance(tree, ast.Module):
         tree = ast.parse(tree)
     else:
         tree = deepcopy(tree)
-    return PseudoSSA().visit(tree)
+    return ExpressionLifter().visit(tree)
 
 
 
