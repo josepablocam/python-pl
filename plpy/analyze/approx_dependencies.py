@@ -1,4 +1,5 @@
-# Construct a very rough data dependency graph
+# Construct a very rough data/control flow-ish dependency graph
+# References: http://web.cs.iastate.edu/~weile/cs513x/5.DependencySlicing.pdf
 
 import ast
 from copy import deepcopy
@@ -265,6 +266,13 @@ class DependenciesConstructor(ast.NodeVisitor):
         self.loads(assign_id, node.value)
         self.stores(assign_id, node.targets)
 
+    def visit_AugAssign(self, node):
+        assign_id = self.create_node(node)
+        implicit_load_node = deepcopy(node.target)
+        implicit_load_node.ctx = ast.Load()
+        self.loads(assign_id, [node.value, implicit_load_node])
+        self.stores(assign_id, node.target)
+
     def visit_Expr(self, node):
         expr_id = self.create_node(node)
         self.loads(expr_id, node.value)
@@ -293,11 +301,16 @@ class DependenciesConstructor(ast.NodeVisitor):
         iter_id = self.create_node(node.iter)
         self.loads(iter_id, node.iter)
 
+        self.push_cf_dependence(test_id)
         self.push_scope()
         self.push_context((node, ControlFlowMarkers.TRUE_BRANCH))
         for stmt in node.body:
             self.visit(stmt)
         self.pop_context()
+
+        # aded dependene between test and assignments in the body
+        # this breaks the DAG
+        self.loads(iter_id, node.iter)
         true_scope = self.pop_scope()
 
         self.push_scope()
@@ -306,6 +319,7 @@ class DependenciesConstructor(ast.NodeVisitor):
             self.visit(stmt)
         self.pop_context()
         false_scope = self.pop_scope()
+        self.pop_cf_dependence()
 
         outer_scope = self.pop_scope()
         merged_scope = self.merge_scopes([outer_scope, true_scope, false_scope])
@@ -317,11 +331,16 @@ class DependenciesConstructor(ast.NodeVisitor):
         self.loads(test_id, node.test)
         self.pop_context()
 
+        self.push_cf_dependence(test_id)
         self.push_scope()
         self.push_context((node, ControlFlowMarkers.TRUE_BRANCH))
         for stmt in node.body:
             self.visit(stmt)
         self.pop_context()
+
+        # add dependence between test and assignments in the body
+        # this breaks the DAG
+        self.loads(test_id, node.test)
         true_scope = self.pop_scope()
 
         self.push_scope()
@@ -330,6 +349,7 @@ class DependenciesConstructor(ast.NodeVisitor):
             self.visit(stmt)
         self.pop_context()
         false_scope = self.pop_scope()
+        self.pop_cf_dependence()
 
         outer_scope = self.pop_scope()
         merged_scope = self.merge_scopes([outer_scope, true_scope, false_scope])
@@ -368,7 +388,6 @@ class DependenciesConstructor(ast.NodeVisitor):
                 outer_scope.pop(key)
         unified_scope = self.merge_scopes([outer_scope, true_scope, false_scope])
         self.push_scope(unified_scope)
-
 
     def visit_With(self, node):
         for with_item in node.items:
