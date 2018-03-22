@@ -2,11 +2,21 @@
 
 import ast
 from copy import deepcopy
+from enum import Enum
 
 from astunparse import unparse
 import networkx as nx
 import matplotlib.pyplot as plt
 
+
+class ControlFlowMarkers(Enum):
+    """
+    Used to keep track of control-flow structure for later purposes of lifting a slice
+    into source code again.
+    """
+    TEST = 1
+    TRUE_BRANCH = 2
+    FALSE_BRANCH = 3
 
 def safe_enlist(x):
     try:
@@ -58,9 +68,9 @@ class ExtractNestedReferences(ast.NodeVisitor):
         return self.nodes_with_member_ast_depth
 
 
-class DataDependenciesConstructor(ast.NodeVisitor):
+class DependenciesConstructor(ast.NodeVisitor):
     """
-    Produces a very rough data dependency graph. It over-approximates significantly
+    Produces a very rough data/cf dependency graph. It over-approximates significantly
     and is not sound.
 
     Functions/Classes are treated independently from any surrounding code, so there are
@@ -108,6 +118,7 @@ class DataDependenciesConstructor(ast.NodeVisitor):
         self.graph = nx.DiGraph()
         self.scope = [{}]
         self.context = []
+        self.cf_dependences = []
 
     def run(self, tree):
         if not isinstance(tree, ast.Module):
@@ -166,14 +177,17 @@ class DataDependenciesConstructor(ast.NodeVisitor):
         else:
             return None
 
-    def get_current_context(self):
-        return self.context if self.context else []
+    def push_cf_dependence(self, _id):
+        self.cf_dependences.append(_id)
+
+    def pop_cf_dependence(self):
+        return self.cf_dependences.pop()
 
     def create_node(self, node):
         _id = self.allocate_id()
         self.graph.add_node(_id)
         self.graph.node[_id]['ast'] = node
-        self.graph.node[_id]['context'] = list(self.get_current_context())
+        self.graph.node[_id]['context'] = list(self.context) if self.context else []
         return _id
 
     def update_node_id(self, node, _id, append=False):
@@ -238,6 +252,11 @@ class DataDependenciesConstructor(ast.NodeVisitor):
 
         # establish edges
         depends_on_ids = self.extract_dependence_ids(clean_references)
+
+        # add in any implicit dependence if necessary
+        if self.cf_dependences:
+            depends_on_ids.add(self.cf_dependences[-1])
+
         edges = [(dep, current_stmt_id) for dep in depends_on_ids]
         self.graph.add_edges_from(edges)
 
@@ -275,14 +294,14 @@ class DataDependenciesConstructor(ast.NodeVisitor):
         self.loads(iter_id, node.iter)
 
         self.push_scope()
-        self.push_context((node, True))
+        self.push_context((node, ControlFlowMarkers.TRUE_BRANCH))
         for stmt in node.body:
             self.visit(stmt)
         self.pop_context()
         true_scope = self.pop_scope()
 
         self.push_scope()
-        self.push_context((node, False))
+        self.push_context((node, ControlFlowMarkers.FALSE_BRANCH))
         for stmt in node.orelse:
             self.visit(stmt)
         self.pop_context()
@@ -293,18 +312,20 @@ class DataDependenciesConstructor(ast.NodeVisitor):
         self.push_scope(merged_scope)
 
     def visit_While(self, node):
+        self.push_context((node, ControlFlowMarkers.TEST))
         test_id = self.create_node(node.test)
         self.loads(test_id, node.test)
+        self.pop_context()
 
         self.push_scope()
-        self.push_context((node, True))
+        self.push_context((node, ControlFlowMarkers.TRUE_BRANCH))
         for stmt in node.body:
             self.visit(stmt)
         self.pop_context()
         true_scope = self.pop_scope()
 
         self.push_scope()
-        self.push_context((node, False))
+        self.push_context((node, ControlFlowMarkers.FALSE_BRANCH))
         for stmt in node.orelse:
             self.visit(stmt)
         self.pop_context()
@@ -315,22 +336,26 @@ class DataDependenciesConstructor(ast.NodeVisitor):
         self.push_scope(merged_scope)
 
     def visit_If(self, node):
+        self.push_context((node, ControlFlowMarkers.TEST))
         test_id = self.create_node(node.test)
         self.loads(test_id, node.test)
+        self.pop_context()
 
+        self.push_cf_dependence(test_id)
         self.push_scope()
-        self.push_context((node, True))
+        self.push_context((node, ControlFlowMarkers.TRUE_BRANCH))
         for stmt in node.body:
             self.visit(stmt)
         self.pop_context()
         true_scope = self.pop_scope()
 
         self.push_scope()
-        self.push_context((node, False))
+        self.push_context((node, ControlFlowMarkers.FALSE_BRANCH))
         for stmt in node.orelse:
             self.visit(stmt)
         self.pop_context()
         false_scope = self.pop_scope()
+        self.pop_cf_dependence()
 
         outer_scope = self.pop_scope()
         # if a set of references are assigned in both
@@ -339,9 +364,11 @@ class DataDependenciesConstructor(ast.NodeVisitor):
         in_both = set(true_scope.keys()).intersection(false_scope.keys())
         # drop these from the outer scope
         for key in in_both:
-            outer_scope.pop(key)
+            if key in outer_scope:
+                outer_scope.pop(key)
         unified_scope = self.merge_scopes([outer_scope, true_scope, false_scope])
         self.push_scope(unified_scope)
+
 
     def visit_With(self, node):
         for with_item in node.items:
@@ -355,7 +382,7 @@ class DataDependenciesConstructor(ast.NodeVisitor):
 
 
 def test(src):
-    constructor = DataDependenciesConstructor()
+    constructor = DependenciesConstructor()
     g = constructor.run(src)
     return constructor, g
 
@@ -367,7 +394,7 @@ def draw(g):
     plt.show()
 
 def backward_slice(graph, seed):
-    reversed_graph = graph.reverse(copy=True)
+    reversed_graph = graph.reverse(copy=False)
     slice_nodes = nx.dfs_preorder_nodes(reversed_graph, seed)
     return graph.subgraph(slice_nodes)
 
@@ -383,6 +410,8 @@ def backward_slices_from_expr(graph, src):
     # TODO: this way of finding nodes is pretty expensive
     # perhaps we should cache this when we build and
     # and hash it later
+    #import pdb
+    #pdb.set_trace()
     ids = get_node_ids(graph, lambda attrs: ast.dump(attrs['ast']) == ast.dump(src_node))
     return [backward_slice(graph, _id) for _id in ids]
 
