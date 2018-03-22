@@ -360,9 +360,10 @@ def test(src):
     return constructor, g
 
 def draw(g):
+    fig, ax = plt.subplots(1)
     labels = nx.get_node_attributes(g, 'ast')
     labels = {k:unparse(v).strip() for k, v in labels.items()}
-    nx.draw(g, labels=labels, node_size=100)
+    nx.draw(g, labels=labels, node_size=100, ax=ax)
     plt.show()
 
 def backward_slice(graph, seed):
