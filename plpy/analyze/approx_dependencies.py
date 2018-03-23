@@ -265,6 +265,22 @@ class DependenciesConstructor(ast.NodeVisitor):
         edges = [(dep, current_stmt_id) for dep in depends_on_ids]
         self.graph.add_edges_from(edges)
 
+    def visit_Import(self, node):
+        import_id = self.create_node(node)
+        for name in node.names:
+            identifier = name.asname if name.asname else name.name
+            # wrap the identifier in the appropriate node
+            # so that later lookups when used in expressions work as expected
+            key_node = ast.parse(identifier).body[0].value
+            try:
+                key_node.ctx = ast.Store()
+            except AttributeError:
+                pass
+            self.stores(import_id, [key_node], extract_references=False)
+
+    def visit_ImportFrom(self, node):
+        self.visit_Import(node)
+
     def visit_Assign(self, node):
         assign_id = self.create_node(node)
         self.loads(assign_id, node.value)
