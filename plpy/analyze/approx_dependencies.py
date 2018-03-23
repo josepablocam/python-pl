@@ -422,9 +422,8 @@ class DependenciesConstructor(ast.NodeVisitor):
             self.visit(stmt)
         self.pop_context()
 
-
-def test(src):
-    constructor = DependenciesConstructor()
+def build_graph(src, assume_standalone_calls_mutate=False):
+    constructor = DependenciesConstructor(assume_standalone_calls_mutate=assume_standalone_calls_mutate)
     g = constructor.run(src)
     return constructor, g
 
@@ -437,9 +436,11 @@ def draw(g, dot_layout=True):
     nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
     plt.show()
 
-def backward_slice(graph, seed):
-    reversed_graph = graph.reverse(copy=False)
-    slice_nodes = nx.dfs_preorder_nodes(reversed_graph, seed)
+def slice_graph(graph, seed, reverse):
+    search_graph = graph
+    if reverse:
+        search_graph = search_graph.reverse(copy=False)
+    slice_nodes = nx.dfs_preorder_nodes(search_graph, seed)
     return graph.subgraph(slice_nodes)
 
 def get_node_ids(graph, predicate):
@@ -449,17 +450,10 @@ def get_node_ids(graph, predicate):
             ids.append(_id)
     return ids
 
-def backward_slices_from_expr(graph, src):
+def slices_from_ids(graph, ids, backwards):
+    return [slice_graph(graph, _id, backwards) for _id in ids]
+
+def slices_from_expr(graph, src, backwards):
     src_node = ast.parse(src).body[0]
-    # TODO: this way of finding nodes is pretty expensive
-    # perhaps we should cache this when we build and
-    # and hash it later
-    #import pdb
-    #pdb.set_trace()
     ids = get_node_ids(graph, lambda attrs: ast.dump(attrs['ast']) == ast.dump(src_node))
-    return [backward_slice(graph, _id) for _id in ids]
-
-
-
-
-
+    return slices_from_ids(graph, ids, backwards)
