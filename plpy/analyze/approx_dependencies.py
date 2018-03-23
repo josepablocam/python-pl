@@ -222,15 +222,19 @@ class DependenciesConstructor(ast.NodeVisitor):
             ids.update(ref_ids)
         return ids
 
-    def stores(self, current_stmt_id, nodes):
+    def stores(self, current_stmt_id, nodes, extract_references=True):
         """
         Update the source line for all references(nodes) to be the current_stmt_id
         """
         store_references = []
         for target in safe_enlist(nodes):
-            for references in self.extract_reference_nodes(target):
-                for ref, ast_depth in references:
-                    self.update_node_id(ref, current_stmt_id, append=False)
+            if extract_references:
+                references = self.extract_reference_nodes(target)
+                references = [ref for nested in references for ref, ast_depth in nested]
+            else:
+                references = nodes
+            for ref in references:
+                self.update_node_id(ref, current_stmt_id, append=False)
 
     def loads(self, current_stmt_id, nodes):
         """
