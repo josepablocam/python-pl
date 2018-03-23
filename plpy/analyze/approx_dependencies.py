@@ -324,7 +324,7 @@ class DependenciesConstructor(ast.NodeVisitor):
         iter_id = self.create_node(node.iter)
         self.loads(iter_id, node.iter)
 
-        self.push_cf_dependence(test_id)
+        self.push_cf_dependence(iter_id)
         self.push_scope()
         self.push_context((node, ControlFlowMarkers.TRUE_BRANCH))
         for stmt in node.body:
