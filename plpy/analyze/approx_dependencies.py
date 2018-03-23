@@ -110,7 +110,7 @@ class DependenciesConstructor(ast.NodeVisitor):
     For subscripting we always associate with the source. So a[..][...][..] = 1 updates the last statement id for (a).
     """
 
-    def __init__(self):
+    def __init__(self, assume_standalone_calls_mutate=False):
         # We should construct a graph representation using data dependencies
         # wrap it in some existing graph library
         # we can then do
@@ -120,6 +120,7 @@ class DependenciesConstructor(ast.NodeVisitor):
         self.scope = [{}]
         self.context = []
         self.cf_dependences = []
+        self.assume_standalone_calls_mutate = assume_standalone_calls_mutate
 
     def run(self, tree):
         if not isinstance(tree, ast.Module):
@@ -296,6 +297,8 @@ class DependenciesConstructor(ast.NodeVisitor):
     def visit_Expr(self, node):
         expr_id = self.create_node(node)
         self.loads(expr_id, node.value)
+        if isinstance(node, ast.Call) and self.assume_standalone_calls_mutate:
+            self.stores(expr_id, node.value)
 
     def visit_Return(self, node):
         return_id = self.create_node(node)
