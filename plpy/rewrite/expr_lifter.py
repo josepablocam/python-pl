@@ -318,7 +318,14 @@ class ExpressionLifter(ast.NodeTransformer):
         new_node = deepcopy(node)
         assignments = []
 
-        func_nodes = self.lift(node.func)
+        # if call is
+        # just one level deep, where it
+        # looks like it might be an instance method
+        # don't lift, since that can make other things harder when analyzing
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            func_nodes = self.ignore(node.func)
+        else:
+            func_nodes = self.lift(node.func)
         assignments.extend(func_nodes[0])
         new_node.func = func_nodes[1]
 
