@@ -425,11 +425,13 @@ def test(src):
     g = constructor.run(src)
     return constructor, g
 
-def draw(g):
+def draw(g, dot_layout=True):
     fig, ax = plt.subplots(1)
     labels = nx.get_node_attributes(g, 'ast')
     labels = {k:unparse(v).strip() for k, v in labels.items()}
-    nx.draw(g, labels=labels, node_size=100, ax=ax)
+    # use better graphviz layout
+    pos = nx.drawing.nx_pydot.graphviz_layout(g) if dot_layout else None
+    nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
     plt.show()
 
 def backward_slice(graph, seed):
