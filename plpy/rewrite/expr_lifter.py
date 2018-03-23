@@ -49,6 +49,7 @@ class ExpressionLifter(ast.NodeTransformer):
             ast.Await,
             ast.Yield,
             ast.YieldFrom,
+            ast.JoinedStr,
         )
         self.ignore_stmt_types = (
             ast.Delete,
@@ -59,10 +60,16 @@ class ExpressionLifter(ast.NodeTransformer):
             ast.Pass, ast.Break, ast.Continue,
         )
 
+    def run(self, src):
+        if not isinstance(src, ast.Module):
+            src = ast.parse(src)
+        else:
+            src = deepcopy(src)
+        return self.visit(src)
 
     def is_atomic(self, node):
-        # TODO: need to modify this further
-        return isinstance(node, self.atom_types) or node is None
+        return isinstance(node, self.atom_types)\
+         or node is None
 
     def is_ignorable_expr(self, node):
         return isinstance(node, self.ignore_expr_types)
@@ -241,8 +248,14 @@ class ExpressionLifter(ast.NodeTransformer):
     def visit_Try(self, node):
         new_node = deepcopy(node)
         new_node.body = self.visit_top_level_list(node.body)
+        new_node.handlers = self.visit_top_level_list(node.handlers)
         new_node.orelse = self.visit_top_level_list(node.orelse)
         new_node.finalbody = self.visit_top_level_list(node.finalbody)
+        return new_node
+
+    def visit_ExceptHandler(self, node):
+        new_node = deepcopy(node)
+        new_node.body = self.visit_top_level_list(node.body)
         return new_node
 
     def visit_Assert(self, node):
@@ -333,9 +346,12 @@ class ExpressionLifter(ast.NodeTransformer):
         assignments.extend(arg_nodes[0])
         new_node.args = arg_nodes[1]
 
-        kw_nodes = self.lift_list(node.keywords)
-        assignments.extend(kw_nodes[0])
-        new_node.keywords = kw_nodes[1]
+        new_kws = []
+        for kw in node.keywords:
+            kw_nodes = self.visit(kw)
+            assignments.extend(kw_nodes[0])
+            new_kws.append(kw_nodes[1])
+        new_node.keywords = new_kws
 
         return assignments, new_node
 
@@ -346,16 +362,6 @@ class ExpressionLifter(ast.NodeTransformer):
         value_nodes = self.lift(node.value)
         assignments.extend(value_nodes[0])
         new_node.value = value_nodes[1]
-
-        return assignments, new_node
-
-    def visit_JoinedStr(self, node):
-        new_node = deepcopy(node)
-        assignments = []
-
-        values_nodes = self.lift_list(node.values)
-        assignments.extend(values_nodes[0])
-        new_node.values = values_nodes[1]
 
         return assignments, new_node
 
@@ -486,12 +492,8 @@ class ExpressionLifter(ast.NodeTransformer):
         return assignments, new_node
 
 
-def lift_expressions(tree):
-    if not isinstance(tree, ast.Module):
-        tree = ast.parse(tree)
-    else:
-        tree = deepcopy(tree)
-    return ExpressionLifter().visit(tree)
+def lift_expressions(src):
+    return ExpressionLifter().run(src)
 
 
 
