@@ -1,4 +1,4 @@
-import inspect
+import ast
 import astunparse
 import pytest
 from plpy.analyze import dynamic_data_dependencies as d3
@@ -115,4 +115,42 @@ def test_get_function_qual_name():
     assert tracer.result_acc[0] == 'BasicDummyClass.m', 'Qualified method name'
     assert tracer.result_acc[1] == 'BasicDummyClass.s', 'Qualified static method name'
     
+@pytest.mark.parametrize('node_str,expected', [('a', 'a'), ('a.b.c', ['a', 'a.b', 'a.b.c'])])
+def test_extract_references(node_str, expected):
+    node = ast.parse(node_str)
+    refs = d3.ExtractReferences().run(node)
+    expected = set(expected)
+    refs = set(refs)
+    assert refs.symmetric_difference(expected) == set(), 'References do not match'
+    
+
+def test_register_assignment_stubs():
+    stubber = d3.AddMemoryUpdateStubs('_stub')
+    src = "x = 1; y = f(); z += 1"
+    expected = "x = 1; _stub([x]); y = f(); _stub([y]); z += 1; _stub([z])"
+    with_stubs = stubber.visit(ast.parse(src))
+    assert ast.dump(with_stubs) == ast.dump(ast.parse(expected))
+    
+def test_is_stub_call():
+    tracer = BasicTracer(d3.get_function_obj)
+    with tracer:
+        d3.memory_update_stub([10])
+    assert d3.is_stub_call(tracer.result_acc[0]), 'Calling a stub function should yield true'
+    
+    tracer.result_acc = []
+    def f():
+        return
+    with tracer:
+        f()
+    assert not d3.is_stub_call(tracer.result_acc[0]), 'Calling non-stub function should yield false'
+        
+    
+
+# test checking if something is a stub call
+# test loading memory locations in x = e, x.b = 100 => (x)
+# check if a function is called by a user
+# check if a function is defined by a user
+# test small programs w/o external libs
+# test small programs w/ external libs
+# plan how to add control flow to this...
 
