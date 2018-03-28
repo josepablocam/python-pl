@@ -6,24 +6,31 @@ import sys
 
 
 class BasicTracer(object):
-    def __init__(self, fun):
+    def __init__(self, fun, trace_lines=False):
         self.fun = fun
+        self.trace_lines = trace_lines
         self.frame_acc = []
         self.result_acc = []
         self.orig_tracer = None
         
-    def basic_trace_call(self, frame, event, arg):
-        if event == 'call':
+    def trace(self, frame, event, arg):
+        if event == 'call' or (event == 'line' and self.trace_lines):
             self.frame_acc.append(frame)
             self.result_acc.append(self.fun(frame))
             return None
             
-    def __enter__(self):
+    def setup(self):
         self.orig_tracer = sys.gettrace()
-        sys.settrace(self.basic_trace_call)
+        sys.settrace(self.trace)
+        
+    def shutdown(self):
+        sys.settrace(self.orig_tracer)
+
+    def __enter__(self):
+       self.setup()
         
     def __exit__(self, type, value, traceback):
-        sys.settrace(self.orig_tracer)
+        self.shutdown()
 
 
 # test helpers
@@ -146,7 +153,6 @@ def test_is_stub_call():
         
     
 
-# test checking if something is a stub call
 # test loading memory locations in x = e, x.b = 100 => (x)
 # check if a function is called by a user
 # check if a function is defined by a user
