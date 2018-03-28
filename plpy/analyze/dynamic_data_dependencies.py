@@ -26,7 +26,7 @@ def get_lineno(frame):
 
 def get_caller_frame(frame):
     return frame.f_back
- 
+
 # this is a horrendous hack... but not sure that there is a better way
 def get_function_obj(frame):
     # can't get function object if we don't actually
@@ -34,7 +34,7 @@ def get_function_obj(frame):
     if frame is None or frame.f_back is None:
         return None
     # note that this hack is based on the info
-    # described in 
+    # described in
     # https://stackoverflow.com/questions/16589547/get-fully-qualified-method-name-from-inspect-stack
     try:
         parent = get_caller_frame(frame)
@@ -61,14 +61,18 @@ def get_function_obj(frame):
 
 def get_function_unqual_name(frame):
     return inspect.getframeinfo(frame).function
-    
+
 def get_function_qual_name(frame):
     # relies on the function object
     obj = get_function_obj(frame)
     if obj is None:
         return None
-    return obj.__qualname__    
+    return obj.__qualname__
 
+def get_abstract_vals(arginfo):
+    arg_names = arginfo.args
+    _locals = arginfo.locals
+    return {name:id(_locals[name]) for name in arg_names}
 
 # stub functions that are inserted
 # into source code to mark events for trace tracking
@@ -134,18 +138,18 @@ class DynamicDataTracer(object):
         self.trace_events = []
         self.trace_errors = []
         self.orig_tracer = None
-        
+
     def _allocate_event_id(self):
         print_debug("allocate event id")
         _id = self.event_counter
         self.event_counter += 1
         return _id
-        
+
     def _called_by_user(self, frame):
         """ only trace calls to functions directly invoked by the user """
         print_debug('called_by_user')
         return inspect.getfile(get_caller_frame(frame)) == self.file_path
-        
+
     def _defined_by_user(self, frame):
         """ only trace lines inside body of functions that are defined by user in same file """
         print_debug('-defined_by_user')
@@ -154,7 +158,7 @@ class DynamicDataTracer(object):
         except TypeError:
             # will be raised for buildin module/class/function, which by definition are not defined by used
             return False
-        
+
     def _getsource(self, frame):
         print_debug('-getsource')
         if self._defined_by_user(frame):
@@ -184,34 +188,54 @@ class DynamicDataTracer(object):
         # Note that any C-based function (e.g. max/len etc)
         # won't actually trigger a call, so we need to see what to do here
         line = self._getsource(frame)
+        event_id = self._allocate_event_id()
         try:
-            event_id = self._allocate_event_id()
-            load_mem_locs = self.get_loads_mem_locs(line, frame)
+            load_references = self.get_load_references_from_line(line)
+            load_mem_locs = self.get_mem_locs(load_references, frame)
             trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
             self.trace_events.append(trace_event)
-            return self.trace
         except SyntaxError:
             print_debug('Syntax error')
             self.trace_errors.append((frame, event, arg, line))
-            return self.trace
+        return self.trace
 
-    def get_loads_mem_locs(self, line, frame):
-        print_debug('get_loads_mem_locs')
+    def get_load_references_from_line(self, line):
         node = to_ast_node(line)
-        references = []
-        
-        # TODO: rewrite this to make it clear
-        if isinstance(node, (ast.Assign, ast.AugAssign)):
-            # if this is a attribute access or slice
-            # then the accessing the LHS counts as a load
-            # TODO; fix, ugh
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                if isinstance(target, (ast.Subscript, ast.Attribute, ast.Slice)):
-                    references.extend(ExtractReferences().run(target))
-            references.extend(ExtractReferences().run(node.value))
+
+        # TODO:
+        # this currently actually produces a.b, a for the LHS
+        # and it will also produce a and a.b for the RHS
+
+        # assignments can trigger loads as well
+        # attribute: a.b = ... => loads(a)
+        # subscript: val[ix][...] = ... => loads(val)
+        # slice: val[1:...] = ... => loads(val)
+        assigment_targets = []
+        if isinstance(node, ast.Assign):
+            assigment_targets.extend(node.targets)
+            expr_node = node.value
+        elif isinstance(node, ast.AugAssign):
+            assignment_targets.append(node.target)
+            expr_node = node.value
         else:
-            references.extend(ExtractReferences().run(node))
+            expr_node = node
+
+        references = []
+        for target in assignment_targets:
+            if isinstance(target, (ast.Attribute, ast.Subscript, ast.Slice)):
+                references.extend(ExtractReferences().run(target))
+
+        # RHS of line (or original node if just expression)
+        references.extend(ExtractReferences().run(expr_node))
+        return references
+
+    def get_mem_locs(self, str_references, frame):
+        """
+        Load the memory locations for these references using the environment
+        available to the frame provided
+        """
+        print_debug('get_mem_locs')
+
         _locals = frame.f_locals
         _globals = frame.f_globals
         mem_locs = []
@@ -230,15 +254,15 @@ class DynamicDataTracer(object):
         # to get self etc
         # use inspect.ismethod/isfunction to distinguish between them
         func_obj = get_function_obj(frame)
-        
+
         # unable to do much here
         if func_obj is None:
             print('func_obj_none: %s' % self._getsource(frame))
             return None
-        
+
         if frame.f_code.co_name == 'f':
             print('qual_func:%s' % func_obj.__qualname__)
-        
+
         if is_stub_call(func_obj):
             print("stub call")
             return self.trace_stub(frame, event, arg)
@@ -248,12 +272,20 @@ class DynamicDataTracer(object):
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
-            # TODO: stuff are things like memory locations
-            # of arguments, values for each argument if constant, and type for all
-            # DO STUFF WITH arguments
-            stuff = (frame)
+            call_args = inspect.getargvalues(frame)
+            abstract_call_args = get_abstract_vals(call_args)
+            is_method = inspect.ismethod(func_obj)
+            # we keep track of the memory location of the function object
+            # because it can allow us to establish a link between a line that calls
+            # an function and the actual function call entry
+            mem_loc_func = id(func_obj)
+            details = dict(
+                is_method          = is_method,
+                abstract_call_args = abstract_call_args,
+                mem_loc_fun        = mem_loc_fun
+                )
             event_id = self._allocate_event_id()
-            trace_event = EnterCall(event_id, call_site_lineno, call_site_line, stuff)
+            trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
             self.trace_events.append(trace_event)
             print('adding to queue: %s' % self.trace_events[-1])
         if self._defined_by_user(frame):
@@ -261,16 +293,16 @@ class DynamicDataTracer(object):
         else:
             print("not user defined: %s" % self._getsource(frame))
             return None
-    
+
     def trace_return(self, frame, event, arg):
         print_debug('trace-return')
         if self._called_by_user(frame):
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
-            stuff = (frame)
+            details = None
             event_id = self._allocate_event_id()
-            trace_event = ExitCall(event_id, call_site_lineno, call_site_line, stuff)
+            trace_event = ExitCall(event_id, call_site_lineno, call_site_line, details)
             self.trace_events.append(trace_event)
 
     def trace_stub(self, frame, event, arg):
@@ -283,7 +315,6 @@ class DynamicDataTracer(object):
             raise Exception("Unknown stub type")
         # remove stub from trace of events
         self.trace_events.pop()
-        # and if we have a stub event, accumulate it
         if stub_event:
             self.trace_events.append(stub_event)
 
@@ -291,19 +322,16 @@ class DynamicDataTracer(object):
         print_debug('consume_memory_update_stub')
         # extract line no, and remove stuff
         caller = frame.f_back
-        # the actual line is off by one
+        # the actual line that triggered this stub call is one line up
         lineno = inspect.getlineno(caller) - 1
-        # Use: inspect.getargvalues
-        arg_name = frame.f_code.co_varnames
-        assert len(arg_name) == 1, 'assignment stub should have only 1 argument: list of references'
-        # get argument: a list of memory references
-        arg = frame.f_locals[arg_name[0]]
-        # memory locations
-        memory_locations = [id(ref) for ref in arg]
+        arginfo = inspect.getargvalues(frame)
+        assert len(arginfo.args) == 1, 'assignment stub should have only 1 argument: list of references'
+        # memory locations that need to be updated
+        references = arginfo.locals[arginfo.args[0]]
+        # memory locations associated with those references
+        memory_locations = [id(ref) for ref in references]
         event_id = self._allocate_event_id()
         trace_event = MemoryUpdate(event_id, memory_locations, lineno)
-        # overwrite the previous event, which is
-        # the stub execline
         return trace_event
 
     def setup(self):
@@ -314,7 +342,7 @@ class DynamicDataTracer(object):
     def shutdown(self):
         print_debug('shutdown')
         sys.settrace(self.orig_tracer)
-        
+
     def add_stubs(self, src):
         print_debug('add_stubs')
         tree = ast.parse(src)
@@ -327,17 +355,18 @@ class DynamicDataTracer(object):
         else:
             # we assume the path is actually source code
             src = file_path
-    
-        # modify source code as necessary
+
+        # modify source code as necessary to add any stubs
         src = self.add_stubs(src)
         self.src_lines = src.split('\n')
-        
+        # we put the instrumented code in a dummy file so that
+        # certain lookups using `inspect` work as expected
         instrumented_file_path = '_instrumented.py'
         with open(instrumented_file_path, 'w') as f:
             f.write(src)
-            
+
         self.file_path = instrumented_file_path
-        
+
         # compile, execute instrumented version
         namespace = {
             '__name__'      : '__main__',
