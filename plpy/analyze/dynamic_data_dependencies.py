@@ -2,127 +2,67 @@ import ast
 import astunparse
 import inspect
 import sys
-import dis
+
 import matplotlib.pyplot as plt
 plt.ion()
-
 import networkx as nx
+import pandas as pd
 
+from .dynamic_trace_events import *
+
+# helper functions
 def to_ast_node(line):
     return ast.parse(line).body[0]
 
-class TraceEvent(object):
+def get_lineno(frame):
+    return frame.f_lineno
+
+def get_caller_frame(frame):
+    return frame.f_back
+ 
+# this is a horrendous hack... but not sure that there is a better way
+def get_function_obj(frame):
+    # can't get function object if we don't actually
+    # have the frame
+    if frame is None or frame.f_back is None:
+        return None
+    # note that this hack is based on the info
+    # described in 
+    # https://stackoverflow.com/questions/16589547/get-fully-qualified-method-name-from-inspect-stack
+    parent = get_caller_frame(frame)
+    parent_info = inspect.getframeinfo(parent)
+    src_line = parent_info.code_context[0].strip()
+    # extract the function in the src call
+    # import pdb
+    # pdb.set_trace()
+    call_func_str = astunparse.unparse(to_ast_node(src_line).value.func)
+    func_obj = eval(call_func_str, parent.f_globals, parent.f_locals)
+    return func_obj
+
+def get_function_unqual_name(frame):
+    return inspect.getframeinfo(frame).function
+    
+def get_function_qual_name(frame):
+    # relies on the function object
+    obj = get_function_obj(frame)
+    if obj is None:
+        return None
+    return obj.__qualname__    
+
+
+# stub functions that are inserted
+# into source code to mark events for trace tracking
+def register_stub(regs):
     pass
 
-class MemoryUpdate(TraceEvent):
-    """
-    Added to trace to update the last line assigning
-    to a set of memory locations
-    """
-    def __init__(self, mem_locs, lineno):
-        self.mem_locs = list(mem_locs)
-        self.lineno = lineno
+STUBS = [register_stub]
 
-    def __str__(self):
-        return 'mem-update(%s)' % self.mem_locs
 
-class ExecLine(TraceEvent):
-    def __init__(self, lineno, line, uses_mem_locs):
-        self.lineno = lineno
-        self.line = line
-        self.uses_mem_locs = uses_mem_locs
-
-    def __str__(self):
-        return 'exec line: %s (line=%d)' % (self.line, self.lineno)
-
-class EnterCall(TraceEvent):
-    def __init__(self, call_site_lineno, call_site_line, stuff):
-        self.call_site_lineno = call_site_lineno
-        self.call_site_line = call_site_line
-        self.stuff = stuff
-
-    def __str__(self):
-        return 'enter call: %s (line=%d)' % (self.call_site_line, self.call_site_lineno)
-
-class ExitCall(TraceEvent):
-    def __init__(self, call_site_lineno, call_site_line, stuff):
-        self.call_site_lineno = call_site_lineno
-        self.call_site_line = call_site_line
-        self.stuff = stuff
-
-    def __str__(self):
-        return 'exit call: %s (line=%d)' % (self.call_site_line, self.call_site_lineno)
 
 # TODO:
 # We should have detailed information for a function call
 # like the memory location of each argument, and the type
 # and constants where possible
-class TraceToGraph(object):
-    def __init__(self):
-        self.counter = 0
-        self.graph = nx.DiGraph()
-        self.lineno_to_nodeid = {}
-        self.mem_loc_to_lineno = {}
-        self.consuming = []
-
-    def allocate_node_id(self):
-        _id = self.counter
-        self.counter += 1
-        return _id
-
-    def handle_ExecLine(self, event):
-        if self.consuming:
-            return
-
-        node_id = self.allocate_node_id()
-        self.graph.add_node(node_id)
-        self.graph.node[node_id]['line'] = event.line
-        self.lineno_to_nodeid[event.lineno] = node_id
-
-        dependencies = [(self.get_latest_node_id_for_mem_loc(ml), node_id) for ml in event.uses_mem_locs]
-        self.graph.add_edges_from(dependencies)
-
-    def get_latest_node_id_for_mem_loc(self, mem_loc):
-        if not mem_loc in self.mem_loc_to_lineno:
-            # we shoulda llocate a new node here
-            pass
-        else:
-            lineno = self.mem_loc_to_lineno[mem_loc]
-            return self.lineno_to_nodeid[lineno]
-
-    def handle_MemoryUpdate(self, event):
-        if self.consuming:
-            return
-
-        for mem_loc in event.mem_locs:
-            self.mem_loc_to_lineno[mem_loc] = event.lineno
-
-    def handle_EnterCall(self, event):
-        self.consuming += [event]
-
-    def handle_ExitCall(self, event):
-        self.consuming.pop()
-
-    def run(self, trace_events):
-        handlers = {
-            ExecLine: self.handle_ExecLine,
-            MemoryUpdate: self.handle_MemoryUpdate,
-            EnterCall: self.handle_EnterCall,
-            ExitCall: self.handle_ExitCall,
-        }
-        for e in trace_events:
-            handlers[type(e)](e)
-        return self.graph
-
-
-
-def draw(g, dot_layout=True):
-    fig, ax = plt.subplots(1)
-    labels = nx.get_node_attributes(g, 'line')
-    # use better graphviz layout
-    pos = nx.drawing.nx_pydot.graphviz_layout(g) if dot_layout else None
-    nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
-    plt.show()
 
 
 class ExtractReferences(ast.NodeVisitor):
@@ -143,7 +83,7 @@ class ExtractReferences(ast.NodeVisitor):
         self.visit(node)
         return [astunparse.unparse(ref).strip() for ref in self.acc]
 
-class RegisterAssignments(ast.NodeTransformer):
+class RegisterAssignmentStubs(ast.NodeTransformer):
     def __init__(self, stub_name):
         self.stub_name = stub_name
 
@@ -162,37 +102,6 @@ class RegisterAssignments(ast.NodeTransformer):
         return to_ast_node(call_str)
 
 
-def get_lineno(frame):
-    return frame.f_lineno
-
-def get_filename(frame):
-    return frame.f_code.co_filename
-
-# def get_function_name(frame):
-#     caller_frame = frame.f_back
-#     module = inspect.getmodule(caller_frame)
-#     func_ref_name = frame.f_code.co_name
-#     func_obj = caller_frame.f_locals[func_ref_name]
-#     name = func_obj.__name__
-#     if module:
-#         name = '%s.%s' % (module.__name__, name)
-#     return name
-
-def get_function_obj(frame):
-    caller_frame = frame.f_back
-    func_ref_name = frame.f_code.co_name
-    if func_ref_name in caller_frame.f_locals:
-        return caller_frame.f_locals[func_ref_name]
-    elif func_ref_name in caller_frame.f_globals:
-        return caller_frame.f_globals[func_ref_name]
-    else:
-        return None
-
-def register_stub(regs):
-    pass
-
-STUBS = [register_stub]
-
 class DynamicDataTracer(object):
     def __init__(self):
         self.acc = []
@@ -200,6 +109,8 @@ class DynamicDataTracer(object):
         self.tracer_file_name = inspect.getsourcefile(inspect.getmodule(self))
         self.check = []
         self.stubs = set(STUBS)
+        self.user_depth = 0
+        self.bad = []
 
     def _load_src_code(self, file_path):
         with open(file_path, 'r') as f:
@@ -210,8 +121,8 @@ class DynamicDataTracer(object):
         return [line.strip() for line in src.split('\n')]
 
     def get_line_of_code(self, frame):
-        if get_filename(frame) == self.file_name:
-            line = self.src_code_lines[get_lineno(frame) - 1]
+        if inspect.getfile(frame) == self.file_name:
+            line = self.src_code_lines[inspect.getlineno(frame) - 1]
         else:
             line = None
         return line
@@ -236,19 +147,25 @@ class DynamicDataTracer(object):
         try:
             line = self.get_line_of_code(frame)
             load_mem_locs = self.get_loads_mem_locs(line, frame)
-            trace_event = ExecLine(get_lineno(frame), line, load_mem_locs)
+            trace_event = ExecLine(inspect.getlineno(frame), line, load_mem_locs)
             self.acc.append(trace_event)
             return self.trace
         except SyntaxError:
+            print('Syntax error')
+            self.bad.append((frame, event, arg, self.get_line_of_code(frame)))
             return self.trace
 
     def get_loads_mem_locs(self, line, frame):
         node = to_ast_node(line)
         references = []
+        
+        # TODO: rewrite this to make it clear
         if isinstance(node, (ast.Assign, ast.AugAssign)):
             # if this is a attribute access or slice
             # then the accessing the LHS counts as a load
-            for target in node.targets:
+            # TODO; fix, ugh
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
                 if isinstance(target, (ast.Subscript, ast.Attribute, ast.Slice)):
                     references.extend(ExtractReferences().run(target))
             references.extend(ExtractReferences().run(node.value))
@@ -258,46 +175,68 @@ class DynamicDataTracer(object):
         _globals = frame.f_globals
         mem_locs = []
         for ref in references:
-            if ref in _locals:
-                mem_locs.append(id(_locals[ref]))
-            elif ref in _globals:
-                mem_locs.append(id(_globals[ref]))
-            else:
+            try:
+                obj = eval(ref, _globals, _locals)
+                mem_locs.append(id(obj))
+            except NameError:
                 mem_locs.append(-1)
         return mem_locs
 
     def is_stub_call(self, frame):
         func_obj = get_function_obj(frame)
         return func_obj in STUBS
+        
+    def _called_by_user(self, frame):
+        """ only trace calls to functions directly invoked by the user """
+        return frame.f_back.f_code.co_filename == self.file_name
+        
+    def _defined_by_user(self, frame):
+        """ only trace lines inside body of functions that are defined by user in same file """
+        return frame.f_code.co_filename == self.file_name
 
     def trace_call(self, frame, event, arg):
+        # TODO: can just use inspect.getargvalues(frame)
+        # to get info and stuff
+        # to get self etc
+        # use inspect.ismethod/isfunction to distinguish between them
         if self.is_stub_call(frame):
             return self.trace_stub(frame, event, arg)
-        # call site
-        call_site_lineno = get_lineno(frame.f_back)
-        call_site_line = self.get_line_of_code(frame.f_back)
-        # TODO: stuff are things like memory locations
-        # of arguments, values for each argument if constant, and type for all
-        stuff = (frame)
-        trace_event = EnterCall(call_site_lineno, call_site_line, stuff)
-        self.acc.append(trace_event)
-        if frame.f_code.co_filename == self.file_name:
+        if self._called_by_user(frame):
+            # call site
+            caller_frame = get_caller_frame(frame)
+            call_site_lineno = inspect.getlineno(caller_frame)
+            call_site_line = self.get_line_of_code(caller_frame)
+            # TODO: stuff are things like memory locations
+            # of arguments, values for each argument if constant, and type for all
+            # DO STUFF WITH arguments
+            stuff = (frame)
+            trace_event = EnterCall(call_site_lineno, call_site_line, stuff)
+            self.acc.append(trace_event)
+        if self._defined_by_user(frame):
             return self.trace
         else:
             return None
+    
+    def trace_return(self, frame, event, arg):
+        call_site_lineno = inspect.getlineno(frame.f_back)
+        call_site_line = self.get_line_of_code(frame.f_back)
+        stuff = (frame)
+        trace_event = ExitCall(call_site_lineno, call_site_line, stuff)
+        self.acc.append(trace_event)
 
     def trace_stub(self, frame, event, arg):
         stub_obj = get_function_obj(frame)
         if stub_obj == register_stub:
-            self.register_assignments(frame, event, arg)
+            self.process_register_assignment_stub(frame, event, arg)
         else:
             raise Exception("Unknown stub type")
 
-    def register_assignments(self, frame, event, arg):
+    def process_register_assignment_stub(self, frame, event, arg):
         # extract line no, and remove stuff
         caller = frame.f_back
         # the actual line is off by one
-        lineno = get_lineno(caller) - 1
+        lineno = inspect.getlineno(caller) - 1
+        # Use: inspect.getargvalues
         arg_name = frame.f_code.co_varnames
         assert len(arg_name) == 1, 'assignment stub should have only 1 argument: list of references'
         # get argument: a list of memory references
@@ -310,50 +249,29 @@ class DynamicDataTracer(object):
         # the dummy execline
         self.acc[-1] = trace_event
 
-    def trace_return(self, frame, event, arg):
-        call_site_lineno = get_lineno(frame.f_back)
-        call_site_line = self.get_line_of_code(frame.f_back)
-        stuff = (frame)
-        trace_event = ExitCall(call_site_lineno, call_site_line, stuff)
-        self.acc.append(trace_event)
-
     def setup(self):
         self.orig_tracer = sys.gettrace()
         sys.settrace(self.trace)
 
     def shutdown(self):
         sys.settrace(self.orig_tracer)
+        
+    def add_stubs(self, src):
+        tree = ast.parse(src)
+        ext_tree = RegisterAssignmentStubs(stub_name=register_stub.__qualname__).visit(tree)
+        return astunparse.unparse(ext_tree)
 
     def run(self, src):
         self.acc = []
-        tree = ast.parse(src)
-        ext_tree = RegisterAssignments(stub_name=register_stub.__qualname__).visit(tree)
-        ext_src = astunparse.unparse(ext_tree)
-        self.src_code_lines = self._split_src_code(ext_src)
+        src = self.add_stubs(src)
+        self.src_code_lines = self._split_src_code(src)
         self.file_name = '__main__'
-        compiled = compile(ext_src, filename=self.file_name, mode='exec')
+        compiled = compile(src, filename=self.file_name, mode='exec')
+        _globals = {register_stub.__qualname__: register_stub}
+        _locals = {}
         self.setup()
-        exec(compiled)
+        exec(compiled, _globals, _locals)
         self.shutdown()
         # remove enter/exit calls associated with tracer itself
         self.acc = self.acc[1:-2]
 
-
-src = """
-def f(x):
-    return x + 2
-
-def get_address(x):
-    return id(x)
-
-start = 3
-y = f(start)
-z = y * 2
-get_address(y)
-x = 100
-x,z = (10, 20)
-w = z
-v = [1,2,[10, 20, 30]]
-v[-1][0] = z
-v
-"""
