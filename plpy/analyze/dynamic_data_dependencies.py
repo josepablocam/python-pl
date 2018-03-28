@@ -183,6 +183,17 @@ class DynamicDataTracer(object):
 
         return None
 
+    def trace_external(self, frame, event, arg):
+        """ tracing function for when we enter an external function"""
+        # This is necessary to address calls to external libraries
+        # where the user calls the function directly, so our standard `trace`
+        # function creates an enter-call event, but since no other tracing
+        # should take place, we never create the corresponding exit-call event
+        # by returning this function that just traces returns, we can make
+        # sure that exit-call event is created and added to our trace
+        if event == 'return':
+            return self.trace_return(frame, event, arg)
+
     def trace_line(self, frame, event, arg):
         print_debug('trace_line')
         # Note that any C-based function (e.g. max/len etc)
@@ -210,9 +221,9 @@ class DynamicDataTracer(object):
         # attribute: a.b = ... => loads(a)
         # subscript: val[ix][...] = ... => loads(val)
         # slice: val[1:...] = ... => loads(val)
-        assigment_targets = []
+        assignment_targets = []
         if isinstance(node, ast.Assign):
-            assigment_targets.extend(node.targets)
+            assignment_targets.extend(node.targets)
             expr_node = node.value
         elif isinstance(node, ast.AugAssign):
             assignment_targets.append(node.target)
@@ -239,7 +250,7 @@ class DynamicDataTracer(object):
         _locals = frame.f_locals
         _globals = frame.f_globals
         mem_locs = []
-        for ref in references:
+        for ref in str_references:
             try:
                 obj = eval(ref, _globals, _locals)
                 mem_locs.append(id(obj))
@@ -260,9 +271,6 @@ class DynamicDataTracer(object):
             print('func_obj_none: %s' % self._getsource(frame))
             return None
 
-        if frame.f_code.co_name == 'f':
-            print('qual_func:%s' % func_obj.__qualname__)
-
         if is_stub_call(func_obj):
             print("stub call")
             return self.trace_stub(frame, event, arg)
@@ -282,7 +290,7 @@ class DynamicDataTracer(object):
             details = dict(
                 is_method          = is_method,
                 abstract_call_args = abstract_call_args,
-                mem_loc_fun        = mem_loc_fun
+                mem_loc_func       = mem_loc_func
                 )
             event_id = self._allocate_event_id()
             trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
@@ -292,7 +300,7 @@ class DynamicDataTracer(object):
             return self.trace
         else:
             print("not user defined: %s" % self._getsource(frame))
-            return None
+            return self.trace_external
 
     def trace_return(self, frame, event, arg):
         print_debug('trace-return')
