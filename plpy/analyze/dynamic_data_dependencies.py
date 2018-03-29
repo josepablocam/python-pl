@@ -126,10 +126,24 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
     def visit_AugAssign(self, node):
         return node, self._create_stub_node([node.target])
 
-    def _create_stub_node(self, targets):
+    def visit_Import(self, node):
+        names = []
+        for _alias in node.names:
+            name = _alias.asname if _alias.asname else _alias.name
+            names.append(name)
+        return node, self._create_stub_node(names, get_nested=False)
+
+    def visit_ImportFrom(self, node):
+        _, stubs = self.visit_Import(ast.Import(node.names))
+        return node, stubs
+
+    def _create_stub_node(self, targets, get_nested=True):
         references = []
-        for tgt in targets:
-            references.extend(get_nested_references(tgt))
+        if get_nested:
+            for tgt in targets:
+                references.extend(get_nested_references(tgt))
+        else:
+            references.extend(targets)
         names_str = ','.join(['"%s"' % ref for ref in references])
         values_str = ','.join(references)
         call_str = f'{self.stub_name}([{names_str}], [{values_str}])'

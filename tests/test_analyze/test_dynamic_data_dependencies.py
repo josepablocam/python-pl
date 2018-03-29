@@ -154,6 +154,27 @@ def test_register_assignment_stubs():
     with_stubs = stubber.visit(ast.parse(src))
     assert ast.dump(with_stubs) == ast.dump(ast.parse(expected))
 
+    src_with_imports = """
+    import numpy as np
+    import sklearn.preprocessing
+    from sklearn import linear_models
+    from sklearn import linear_models as lm
+    """
+    expected_with_imports = """
+    import numpy as np
+    _stub(['np'], [np])
+    import sklearn.preprocessing
+    _stub(['sklearn.preprocessing'], [sklearn.preprocessing])
+    from sklearn import linear_models
+    _stub(['linear_models'], [linear_models])
+    from sklearn import linear_models as lm
+    _stub(['lm'], [lm])
+    """
+    src_with_imports = textwrap.dedent(src_with_imports)
+    expected_with_imports = textwrap.dedent(expected_with_imports)
+    with_imports_with_stubs = stubber.visit(ast.parse(src_with_imports))
+    assert ast.dump(with_imports_with_stubs) == ast.dump(ast.parse(expected_with_imports))
+
 def test_is_stub_call():
     tracer = BasicTracer(d3.get_function_obj)
     with tracer:
