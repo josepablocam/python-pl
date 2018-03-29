@@ -78,7 +78,7 @@ def get_abstract_vals(arginfo):
 
 # stub functions that are inserted
 # into source code to mark events for trace tracking
-def memory_update_stub(regs):
+def memory_update_stub(names, values):
     pass
 
 STUBS = [memory_update_stub]
@@ -127,8 +127,9 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         references = []
         for tgt in targets:
             references.extend(get_nested_references(tgt))
-        ref_str = ','.join(references)
-        call_str = f'{self.stub_name}([{ref_str}])'
+        names_str = ','.join(['"%s"' % ref for ref in references])
+        values_str = ','.join(references)
+        call_str = f'{self.stub_name}([{names_str}], [{values_str}])'
         return to_ast_node(call_str)
 
 
@@ -254,13 +255,13 @@ class DynamicDataTracer(object):
 
         _locals = frame.f_locals
         _globals = frame.f_globals
-        mem_locs = []
+        mem_locs = {}
         for ref in str_references:
             try:
                 obj = eval(ref, _globals, _locals)
-                mem_locs.append(id(obj))
+                mem_locs[ref] = id(obj)
             except NameError:
-                mem_locs.append(-1)
+                mem_locs[ref] = -1
         return mem_locs
 
     def trace_call(self, frame, event, arg):
@@ -348,11 +349,12 @@ class DynamicDataTracer(object):
         # the actual line that triggered this stub call is one line up
         lineno = inspect.getlineno(caller) - 1
         arginfo = inspect.getargvalues(frame)
-        assert len(arginfo.args) == 1, 'assignment stub should have only 1 argument: list of references'
+        assert len(arginfo.args) == 2, 'assignment stub should have only 2 argument: list of names and list of values'
         # memory locations that need to be updated
-        references = arginfo.locals[arginfo.args[0]]
+        names = arginfo.locals[arginfo.args[0]]
+        values = arginfo.locals[arginfo.args[1]]
         # memory locations associated with those references
-        memory_locations = [id(ref) for ref in references]
+        memory_locations = {name:id(val) for name, val in zip(names, values)}
         event_id = self._allocate_event_id()
         trace_event = MemoryUpdate(event_id, memory_locations, lineno)
         return trace_event

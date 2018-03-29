@@ -150,14 +150,14 @@ def test_extract_references(node_str, full_expected, all_but_first_expected):
 def test_register_assignment_stubs():
     stubber = d3.AddMemoryUpdateStubs('_stub')
     src = "x = 1; y = f(); z += 1"
-    expected = "x = 1; _stub([x]); y = f(); _stub([y]); z += 1; _stub([z])"
+    expected = "x = 1; _stub(['x'], [x]); y = f(); _stub(['y'], [y]); z += 1; _stub(['z'], [z])"
     with_stubs = stubber.visit(ast.parse(src))
     assert ast.dump(with_stubs) == ast.dump(ast.parse(expected))
 
 def test_is_stub_call():
     tracer = BasicTracer(d3.get_function_obj)
     with tracer:
-        d3.memory_update_stub([10])
+        d3.memory_update_stub(['var'], [10])
     assert d3.is_stub_call(tracer.result_acc[0]), 'Calling a stub function should yield true'
 
     tracer.result_acc = []
@@ -212,24 +212,23 @@ def test_function_called_by_user():
         np.max([1, 2])
     assert helper.result_acc[0] and (not helper.result_acc[1]), 'First is call made by user, second is not (its call to np._amax in np source)'
 
-
 def standardize_source(src):
     return astunparse.unparse(ast.parse(src))
 
-def check_memory_update(event, num_updates):
+def check_memory_update(event, updates):
     assert isinstance(event, MemoryUpdate)
-    # has right set of mem locations
-    assert len(event.mem_locs) == num_updates
+    assert set(event.mem_locs.keys()) == set(updates)
 
-def check_exec_line(event, line):
+def check_exec_line(event, line, refs_loaded):
     assert isinstance(event, ExecLine)
     assert standardize_source(event.line) == standardize_source(line)
+    assert set(event.uses_mem_locs.keys()) == set(refs_loaded)
 
 def check_enter_call(event, qualname, call_args, is_method):
     assert isinstance(event, EnterCall)
     print(event.details)
     assert event.details['qualname'] == qualname
-    assert set(event.details['abstract_call_args'].keys()) == call_args
+    assert set(event.details['abstract_call_args'].keys()) == set(call_args)
     assert event.details['is_method'] == is_method
 
 def check_exit_call(event, details=None):
@@ -249,19 +248,19 @@ def basic_case_1():
 
         expected_event_checks = [
             # x = 10
-            make_event_check(check_exec_line, line='x = 10'),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_exec_line, line='x = 10', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['x']),
             # y = 20
-            make_event_check(check_exec_line, line='y = 20'),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_exec_line, line='y = 20', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['y']),
             # z = f(x, y)
-            make_event_check(check_exec_line, line='z = f(x, y)'),
-            make_event_check(check_enter_call, qualname='f', call_args=set(['x', 'y']), is_method=False),
-            make_event_check(check_exec_line, line='return x + y'),
+            make_event_check(check_exec_line, line='z = f(x, y)', refs_loaded=['f', 'x', 'y']),
+            make_event_check(check_enter_call, qualname='f', call_args=['x', 'y'], is_method=False),
+            make_event_check(check_exec_line, line='return x + y', refs_loaded=['x', 'y']),
             make_event_check(check_exit_call),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_memory_update, updates=['z']),
         ]
-        return textwrap.dedent(src), expected_event_checks
+        return src, expected_event_checks
 
 def basic_case_2():
         src = """
@@ -276,21 +275,21 @@ def basic_case_2():
 
         expected_event_checks = [
             # x = 10
-            make_event_check(check_exec_line, line='x = 10'),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_exec_line, line='x = 10', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['x']),
             # y = 20
-            make_event_check(check_exec_line, line='y = 20'),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_exec_line, line='y = 20', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['y']),
             # z = A.f(x, y)
-            make_event_check(check_exec_line, line='z = A.f(x, y)'),
+            make_event_check(check_exec_line, line='z = A.f(x, y)', refs_loaded=['x', 'y', 'A', 'A.f']),
             # note that is_method is False as staticmethods are indistinguishable from function's in Python 3.*
             # in particular, inspect.ismethod returns False
-            make_event_check(check_enter_call, qualname='A.f', call_args=set(['x', 'y']), is_method=False),
-            make_event_check(check_exec_line, line='return x + y'),
+            make_event_check(check_enter_call, qualname='A.f', call_args=['x', 'y'], is_method=False),
+            make_event_check(check_exec_line, line='return x + y', refs_loaded=['x', 'y']),
             make_event_check(check_exit_call),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_memory_update, updates=['z']),
         ]
-        return textwrap.dedent(src), expected_event_checks
+        return src, expected_event_checks
 
 def basic_case_3():
         src = """
@@ -304,43 +303,47 @@ def basic_case_3():
             y = 20
             obj = A(10)
             z = obj.f(x, y)
+            obj.v = 200
         """
 
         expected_event_checks = [
             # x = 10
-            make_event_check(check_exec_line, line='x = 10'),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_exec_line, line='x = 10', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['x']),
             # y = 10
-            make_event_check(check_exec_line, line='y = 20'),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_exec_line, line='y = 20', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['y']),
             # obj = A(10)
-            make_event_check(check_exec_line, line='obj = A(10)'),
+            make_event_check(check_exec_line, line='obj = A(10)', refs_loaded=['A']),
             # note that the constructor call is not yet a 'method' as there is no instance bount to it at the time of function entry
             make_event_check(check_enter_call, qualname='A', call_args=set(['self', 'x']), is_method=False),
-            make_event_check(check_exec_line, line='self.v = x'),
+            make_event_check(check_exec_line, line='self.v = x', refs_loaded=['self', 'x']),
             # self, and self.v
-            make_event_check(check_memory_update, num_updates=2),
+            make_event_check(check_memory_update, updates=['self', 'self.v']),
             make_event_check(check_exit_call),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_memory_update, updates=['obj']),
             # z = obj.f(x, y)
-            make_event_check(check_exec_line, line='z = obj.f(x, y)'),
+            make_event_check(check_exec_line, line='z = obj.f(x, y)', refs_loaded=['obj', 'obj.f', 'x', 'y']),
             # note that is_method is False as staticmethods are indistinguishable from function's in Python 3.*
             # in particular, inspect.ismethod returns False
             make_event_check(check_enter_call, qualname='A.f', call_args=set(['self', 'x', 'y']), is_method=True),
-            make_event_check(check_exec_line, line='return x + y + self.v'),
+            make_event_check(check_exec_line, line='return x + y + self.v', refs_loaded=['x', 'y', 'self', 'self.v']),
             make_event_check(check_exit_call),
-            make_event_check(check_memory_update, num_updates=1),
+            make_event_check(check_memory_update, updates=['z']),
+            # obj.v = 200
+            make_event_check(check_exec_line, line='obj.v = 200', refs_loaded=['obj']),
+            make_event_check(check_memory_update, updates=['obj', 'obj.v']),
         ]
-        return textwrap.dedent(src), expected_event_checks
+        return src, expected_event_checks
 
 @pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3])
 def test_basic_programs(_input_fun):
     tracer = d3.DynamicDataTracer()
     src, expected_checks = _input_fun()
+    src = textwrap.dedent(src)
     tracer.run(src)
 
     assert len(tracer.trace_events) == len(expected_checks), 'The event and checks are mismatched.'
-    print( (list(map(str, tracer.trace_events))))
     for event, check in zip(tracer.trace_events, expected_checks):
         check(event)
 

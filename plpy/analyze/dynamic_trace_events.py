@@ -9,7 +9,7 @@ class MemoryUpdate(TraceEvent):
     """
     def __init__(self, event_id, mem_locs, lineno):
         self.event_id = event_id
-        self.mem_locs = list(mem_locs)
+        self.mem_locs = mem_locs
         self.lineno = lineno
         self.line = None
 
