@@ -242,7 +242,7 @@ class DynamicDataTracer(object):
 
         # RHS of line (or original node if just expression)
         references.extend(get_nested_references(expr_node))
-        return references
+        return set(references)
 
     def get_mem_locs(self, str_references, frame):
         """
@@ -366,7 +366,15 @@ class DynamicDataTracer(object):
         ext_tree = AddMemoryUpdateStubs(stub_name=memory_update_stub.__qualname__).visit(tree)
         return astunparse.unparse(ext_tree)
 
+    def clear(self):
+        self.file_path = None
+        self.trace_events = []
+        self.trace_errors = []
+        self.event_counter = 0
+
     def run(self, file_path):
+        self.clear()
+
         if os.path.exists(file_path):
             src = open(file_path).read()
         else:
