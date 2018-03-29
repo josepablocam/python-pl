@@ -2,10 +2,12 @@ import ast
 import astunparse
 import pytest
 import sys
+import textwrap
 
 import numpy as np
 
 from plpy.analyze import dynamic_data_dependencies as d3
+from plpy.analyze.dynamic_trace_events import *
 
 
 class BasicTracer(object):
@@ -177,6 +179,7 @@ def test_is_stub_call():
         ('a.b.c = x * 10',   ['x', 'a', 'a.b']    ),
         ('a[0][1] = c.d[0]', ['a', 'c', 'c.d']    ),
         ('a.b.c[0] = 10',    ['a', 'a.b', 'a.b.c']),
+        ('x = {a:1, b.c:2}',   ['a', 'b', 'b.c'])
     ]
 )
 def test_get_load_references_from_line(_input, expected):
@@ -210,5 +213,134 @@ def test_function_called_by_user():
     assert helper.result_acc[0] and (not helper.result_acc[1]), 'First is call made by user, second is not (its call to np._amax in np source)'
 
 
-# trace events now with small programs
+def standardize_source(src):
+    return astunparse.unparse(ast.parse(src))
+
+def check_memory_update(event, num_references):
+    assert isinstance(event, MemoryUpdate)
+    # has right set of mem locations
+    assert len(event.mem_locs) == num_references
+
+def check_exec_line(event, line):
+    assert isinstance(event, ExecLine)
+    assert standardize_source(event.line) == standardize_source(line)
+
+def check_enter_call(event, details):
+    assert isinstance(event, EnterCall)
+    print(event.details)
+    assert event.details['qualname'] == details['qualname']
+    assert set(event.details['abstract_call_args'].keys()) == details['abstract_call_args']
+    assert event.details['is_method'] == details['is_method']
+
+def check_exit_call(event, details):
+    assert isinstance(event, ExitCall)
+
+def make_event_check(fun, details):
+    return lambda x: fun(x, details)
+
+def basic_case_1():
+        src = """
+            def f(x, y):
+                return x + y
+            x = 10
+            y = 20
+            z = f(x, y)
+        """
+
+        expected_event_checks = [
+            # x = 10
+            make_event_check(check_exec_line, 'x = 10'),
+            make_event_check(check_memory_update, 1),
+            # y = 20
+            make_event_check(check_exec_line, 'y = 20'),
+            make_event_check(check_memory_update, 1),
+            # z = f(x, y)
+            make_event_check(check_exec_line, 'z = f(x, y)'),
+            make_event_check(check_enter_call, {'qualname': 'f', 'abstract_call_args': set(['x', 'y']), 'is_method': False}),
+            make_event_check(check_exec_line, 'return x + y'),
+            make_event_check(check_exit_call, None),
+            make_event_check(check_memory_update, 1),
+        ]
+        return textwrap.dedent(src), expected_event_checks
+
+def basic_case_2():
+        src = """
+            class A(object):
+                @staticmethod
+                def f(x, y):
+                    return x + y
+            x = 10
+            y = 20
+            z = A.f(x, y)
+        """
+
+        expected_event_checks = [
+            # x = 10
+            make_event_check(check_exec_line, 'x = 10'),
+            make_event_check(check_memory_update, 1),
+            # y = 20
+            make_event_check(check_exec_line, 'y = 20'),
+            make_event_check(check_memory_update, 1),
+            # z = A.f(x, y)
+            make_event_check(check_exec_line, 'z = A.f(x, y)'),
+            # note that is_method is False as staticmethods are indistinguishable from function's in Python 3.*
+            # in particular, inspect.ismethod returns False
+            make_event_check(check_enter_call, {'qualname': 'A.f', 'abstract_call_args': set(['x', 'y']), 'is_method': False}),
+            make_event_check(check_exec_line, 'return x + y'),
+            make_event_check(check_exit_call, None),
+            make_event_check(check_memory_update, 1),
+        ]
+        return textwrap.dedent(src), expected_event_checks
+
+def basic_case_3():
+        src = """
+            class A(object):
+                def __init__(self, x):
+                    self.v = x
+
+                def f(self, x, y):
+                    return x + y + self.v
+            x = 10
+            y = 20
+            obj = A(10)
+            z = obj.f(x, y)
+        """
+
+        expected_event_checks = [
+            # x = 10
+            make_event_check(check_exec_line, 'x = 10'),
+            make_event_check(check_memory_update, 1),
+            # y = 10
+            make_event_check(check_exec_line, 'y = 20'),
+            make_event_check(check_memory_update, 1),
+            # obj = A(10)
+            make_event_check(check_exec_line, 'obj = A(10)'),
+            # note that the constructor call is not yet a 'method' as there is no instance bount to it at the time of function entry
+            make_event_check(check_enter_call, {'qualname': 'A', 'abstract_call_args': set(['self', 'x']), 'is_method': False}),
+            make_event_check(check_exec_line, 'self.v = x'),
+            # self, and self.v
+            make_event_check(check_memory_update, 2),
+            make_event_check(check_exit_call, None),
+            make_event_check(check_memory_update, 1),
+            # z = obj.f(x, y)
+            make_event_check(check_exec_line, 'z = obj.f(x, y)'),
+            # note that is_method is False as staticmethods are indistinguishable from function's in Python 3.*
+            # in particular, inspect.ismethod returns False
+            make_event_check(check_enter_call, {'qualname': 'A.f', 'abstract_call_args': set(['self', 'x', 'y']), 'is_method': True}),
+            make_event_check(check_exec_line, 'return x + y + self.v'),
+            make_event_check(check_exit_call, None),
+            make_event_check(check_memory_update, 1),
+        ]
+        return textwrap.dedent(src), expected_event_checks
+
+@pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3])
+def test_basic_programs(_input_fun):
+    tracer = d3.DynamicDataTracer()
+    src, expected_checks = _input_fun()
+    tracer.run(src)
+
+    assert len(tracer.trace_events) == len(expected_checks), 'The event and checks are mismatched.'
+    print( (list(map(str, tracer.trace_events))))
+    for event, check in zip(tracer.trace_events, expected_checks):
+        check(event)
 

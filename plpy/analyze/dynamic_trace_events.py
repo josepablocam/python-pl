@@ -27,21 +27,21 @@ class ExecLine(TraceEvent):
         return 'exec line: %s (line=%d)' % (self.line, self.lineno)
 
 class EnterCall(TraceEvent):
-    def __init__(self, event_id, call_site_lineno, call_site_line, stuff):
+    def __init__(self, event_id, call_site_lineno, call_site_line, details):
         self.event_id = event_id
         self.lineno = call_site_lineno
         self.line = call_site_line
-        self.stuff = stuff
+        self.details = details
 
     def __str__(self):
         return 'enter call: %s (line=%d)' % (self.line, self.lineno)
 
 class ExitCall(TraceEvent):
-    def __init__(self, event_id, call_site_lineno, call_site_line, stuff):
+    def __init__(self, event_id, call_site_lineno, call_site_line, details):
         self.event_id = event_id
         self.lineno = call_site_lineno
         self.line = call_site_line
-        self.stuff = stuff
+        self.details = details
 
     def __str__(self):
         return 'exit call: %s (line=%d)' % (self.line, self.lineno)

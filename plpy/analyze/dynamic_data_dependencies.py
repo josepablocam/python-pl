@@ -63,9 +63,10 @@ def get_function_obj(frame):
 def get_function_unqual_name(frame):
     return inspect.getframeinfo(frame).function
 
-def get_function_qual_name(frame):
+def get_function_qual_name(obj):
     # relies on the function object
-    obj = get_function_obj(frame)
+    if inspect.isframe(obj):
+        obj = get_function_obj(obj)
     if obj is None:
         return None
     return obj.__qualname__
@@ -284,15 +285,20 @@ class DynamicDataTracer(object):
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
+
+            # call details
+            is_method = inspect.ismethod(func_obj)
+            qualname = get_function_qual_name(func_obj)
             call_args = inspect.getargvalues(frame)
             abstract_call_args = get_abstract_vals(call_args)
-            is_method = inspect.ismethod(func_obj)
             # we keep track of the memory location of the function object
             # because it can allow us to establish a link between a line that calls
             # an function and the actual function call entry
             mem_loc_func = id(func_obj)
+
             details = dict(
                 is_method          = is_method,
+                qualname           = qualname,
                 abstract_call_args = abstract_call_args,
                 mem_loc_func       = mem_loc_func
                 )
