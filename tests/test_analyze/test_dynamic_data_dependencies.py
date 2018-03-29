@@ -122,13 +122,17 @@ def test_get_function_qual_name():
     assert tracer.result_acc[0] == 'BasicDummyClass.m', 'Qualified method name'
     assert tracer.result_acc[1] == 'BasicDummyClass.s', 'Qualified static method name'
     
-@pytest.mark.parametrize('node_str,expected', [('a', 'a'), ('a.b.c', ['a', 'a.b', 'a.b.c'])])
-def test_extract_references(node_str, expected):
+@pytest.mark.parametrize('node_str,full_expected,all_but_first_expected', [('a', ['a'], []), ('a.b.c', ['a', 'a.b', 'a.b.c'], ['a', 'a.b'])])
+def test_extract_references(node_str, full_expected, all_but_first_expected):
     node = ast.parse(node_str)
-    refs = d3.ExtractReferences().run(node)
-    expected = set(expected)
-    refs = set(refs)
-    assert refs.symmetric_difference(expected) == set(), 'References do not match'
+    refs = set(d3.get_nested_references(node))
+    refs_but_first = set(d3.get_nested_references(node, exclude_first=True))
+
+    full_expected = set(full_expected)
+    all_but_first_expected = set(all_but_first_expected)
+    
+    assert refs == full_expected, 'References do not match'
+    assert refs_but_first == all_but_first_expected, 'References do not match'
     
 
 def test_register_assignment_stubs():

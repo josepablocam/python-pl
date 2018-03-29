@@ -42,6 +42,7 @@ def get_function_obj(frame):
         if parent_info.code_context:
             print('going through parent_info')
             src_line = parent_info.code_context[0].strip()
+            print('source: %s' % src_line)
             ast_node = to_ast_node(src_line)
             func_str = astunparse.unparse(ast_node.value.func)
         else:
@@ -85,13 +86,6 @@ def is_stub_call(func_obj):
     return func_obj in STUBS
 
 
-
-# TODO:
-# We should have detailed information for a function call
-# like the memory location of each argument, and the type
-# and constants where possible
-
-
 class ExtractReferences(ast.NodeVisitor):
     """
     Extract nested names and attributes references.
@@ -111,6 +105,13 @@ class ExtractReferences(ast.NodeVisitor):
         return [astunparse.unparse(ref).strip() for ref in self.acc]
 
 
+def get_nested_references(node, exclude_first=False):
+    refs = ExtractReferences().run(node)
+    if exclude_first:
+        refs = refs[1:]
+    return refs
+
+
 class AddMemoryUpdateStubs(ast.NodeTransformer):
     def __init__(self, stub_name):
         self.stub_name = stub_name
@@ -124,7 +125,7 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
     def _create_stub_node(self, targets):
         references = []
         for tgt in targets:
-            references.extend(ExtractReferences().run(tgt))
+            references.extend(get_nested_references(tgt))
         ref_str = ','.join(references)
         call_str = f'{self.stub_name}([{ref_str}])'
         return to_ast_node(call_str)
@@ -213,12 +214,8 @@ class DynamicDataTracer(object):
     def get_load_references_from_line(self, line):
         node = to_ast_node(line)
 
-        # TODO:
-        # this currently actually produces a.b, a for the LHS
-        # and it will also produce a and a.b for the RHS
-
         # assignments can trigger loads as well
-        # attribute: a.b = ... => loads(a)
+        # attribute: a.b = ... => loads(a), loads(a.b)
         # subscript: val[ix][...] = ... => loads(val)
         # slice: val[1:...] = ... => loads(val)
         assignment_targets = []
@@ -233,11 +230,15 @@ class DynamicDataTracer(object):
 
         references = []
         for target in assignment_targets:
-            if isinstance(target, (ast.Attribute, ast.Subscript, ast.Slice)):
-                references.extend(ExtractReferences().run(target))
+            if isinstance(target, ast.Attribute):
+                # in this case we don't want to have as a load the deepest access
+                # e.g. a.b.c = ... => load(a), load(a.b) (but not load(a.b.c))
+                references.extend(get_nested_references(target, exclude_first=True))
+            if isinstance(target, (ast.Subscript, ast.Slice)):
+                references.extend(get_nested_references(target))
 
         # RHS of line (or original node if just expression)
-        references.extend(ExtractReferences().run(expr_node))
+        references.extend(get_nested_references(expr_node))
         return references
 
     def get_mem_locs(self, str_references, frame):
@@ -260,13 +261,12 @@ class DynamicDataTracer(object):
 
     def trace_call(self, frame, event, arg):
         print_debug('trace_call')
-        # TODO: can just use inspect.getargvalues(frame)
-        # to get info and stuff
-        # to get self etc
-        # use inspect.ismethod/isfunction to distinguish between them
+
+        # retrieve the actual function being called
         func_obj = get_function_obj(frame)
 
         # unable to do much here
+        # so we basically just stop tracing until the next call comes around
         if func_obj is None:
             print('func_obj_none: %s' % self._getsource(frame))
             return None
@@ -274,6 +274,7 @@ class DynamicDataTracer(object):
         if is_stub_call(func_obj):
             print("stub call")
             return self.trace_stub(frame, event, arg)
+
         if self._called_by_user(frame):
             print('appending called by user')
             # call site
@@ -296,9 +297,13 @@ class DynamicDataTracer(object):
             trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
             self.trace_events.append(trace_event)
             print('adding to queue: %s' % self.trace_events[-1])
+
+        # functions that are defined by the user
+        # will have line-level tracing
         if self._defined_by_user(frame):
             return self.trace
         else:
+            # external functions only get the paired exit-call event
             print("not user defined: %s" % self._getsource(frame))
             return self.trace_external
 

@@ -1,7 +1,7 @@
-
+import matplotlib.pyplot as plt
 import networkx as nx
 
-from dynamic_trace_events import *
+from .dynamic_trace_events import *
 
 class TraceToGraph(object):
     def __init__(self):
@@ -25,18 +25,14 @@ class TraceToGraph(object):
         self.graph.add_node(node_id)
         self.graph.node[node_id]['line'] = event.line
         self.lineno_to_nodeid[event.lineno] = node_id
-        import pdb
-        pdb.set_trace()
-
         dependencies = [(self.get_latest_node_id_for_mem_loc(ml), node_id) for ml in event.uses_mem_locs]
         self.graph.add_edges_from(dependencies)
 
     def get_latest_node_id_for_mem_loc(self, mem_loc):
         if not mem_loc in self.mem_loc_to_lineno:
             # we shoulda llocate a new node here
-            import pdb
-            pdb.set_trace()
             if not self.unknown_id in self.graph.nodes:
+                self.graph.add_node(self.unknown_id)
                 self.graph.node[self.unknown_id]['line'] = 'UNKNOWN'
             return self.unknown_id
         else:
