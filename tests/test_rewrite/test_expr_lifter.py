@@ -1,7 +1,10 @@
-import pytest
-from plpy.rewrite.expr_lifter import ExpressionLifter, lift_expressions
 import ast
 import astunparse
+import textwrap
+
+import pytest
+
+from plpy.rewrite.expr_lifter import ExpressionLifter, lift_expressions
 
 
 def test_symbol_format():
@@ -14,12 +17,12 @@ def test_symbol_increases():
     lifter = ExpressionLifter(sym_format_name='%d')
     assert lifter.alloc_symbol_name() == '0'
     assert lifter.alloc_symbol_name() == '1', 'Symbol counter should increase'
-    
+
 def lift_atomic(expr):
     lifted = lift_expressions(expr)
     print(astunparse.unparse(lifted))
     assert ast.dump(expr) == ast.dump(lifted)
-    
+
 def lift_non_atomic(orig, expected):
     lifted = lift_expressions(orig)
     assert ast.dump(lifted) == ast.dump(expected)
@@ -49,107 +52,112 @@ expr_test_cases = [
 ]
 
 stmt_test_cases = [
-('Try', 
-    """
-try:
-    pass
-except AttributeError:
-    g()
-    """,
-    """
-try:
-    g() + h()
-except AttributeError:
-    z() * 2
-else:
-    w + a.b
-finally:
-    y(w())
-    """,
-    """
-try:
-    _var0 = g()
-    _var1 = h()
-    _var0 + _var1
-except AttributeError:
-    _var2 = z()
-    _var2 * 2
-else:
-    _var3 = a.b
-    w + _var3
-finally:
-    _var4 = w()
-    y(_var4)
-    """
-),
-('Raise', 'raise Ok', 'raise a.b.c()', '_var0 = a.b; _var1 = _var0.c; raise _var1()'),
-('If',
-    """
-if x:
-    2
-else:
-    3
-    """,
-    """
-if x + 2 < 3:
-    f() * g()
-elif c + d + w:
-    z * 2 + h()
-else:
-    w() + 2
-    """,
-    """
-_var0 = x + 2
-if _var0 < 3:
-    _var1 = f()
-    _var2 = g()
-    _var1 * _var2
-else:
-    _var3 = c + d
-    if _var3 + w:
-        _var4 = z * 2
-        _var5 = h()
-        _var4 + _var5
-    else:
-        _var6 = w()
-        _var6 + 2
-    """
-),
-('While',
-"""
-while x:
-    2
-""",
-"""
-while x + g(h()):
-    f(h())
-""",
-"""
-while x + g(h()):
-    _var0 = h()
-    f(_var0)
-"""
+    ('Try',
+        """
+        try:
+            pass
+        except AttributeError:
+            g()
+        """,
+        """
+        try:
+            g() + h()
+        except AttributeError:
+            z() * 2
+        else:
+            w + a.b
+        finally:
+            y(w())
+        """,
+        """
+        try:
+            _var0 = g()
+            _var1 = h()
+            _var0 + _var1
+        except AttributeError:
+            _var2 = z()
+            _var2 * 2
+        else:
+            _var3 = a.b
+            w + _var3
+        finally:
+            _var4 = w()
+            y(_var4)
+        """
     ),
-('For',
-"""
-for y in x:
-    2
-""",
-"""
-for y in g(h()):
-    f(g())
-""",
-"""
-for y in g(h()):
-    _var0 = g()
-    f(_var0)
-"""),
-('Assign','a = 1', 'a = g(h())', '_var0 = h(); a = g(_var0)')
+    ('Raise', 'raise Ok', 'raise a.b.c()', '_var0 = a.b; _var1 = _var0.c; raise _var1()'),
+    ('If',
+        """
+        if x:
+            2
+        else:
+            3
+        """,
+        """
+        if x + 2 < 3:
+            f() * g()
+        elif c + d + w:
+            z * 2 + h()
+        else:
+            w() + 2
+        """,
+        """
+        _var0 = x + 2
+        if _var0 < 3:
+            _var1 = f()
+            _var2 = g()
+            _var1 * _var2
+        else:
+            _var3 = c + d
+            if _var3 + w:
+                _var4 = z * 2
+                _var5 = h()
+                _var4 + _var5
+            else:
+                _var6 = w()
+                _var6 + 2
+        """
+    ),
+    ('While',
+    """
+        while x:
+            2
+    """,
+    """
+        while x + g(h()):
+            f(h())
+    """,
+    """
+        while x + g(h()):
+            _var0 = h()
+            f(_var0)
+    """
+        ),
+    ('For',
+    """
+        for y in x:
+            2
+    """,
+    """
+        for y in g(h()):
+            f(g())
+    """,
+    """
+        for y in g(h()):
+            _var0 = g()
+            f(_var0)
+    """),
+    ('Assign','a = 1', 'a = g(h())', '_var0 = h(); a = g(_var0)')
 ]
-    
-    
+
+
 @pytest.mark.parametrize("expr_type,atomic_case,non_atomic_case,expected", expr_test_cases + stmt_test_cases)
 def test_expression(expr_type, atomic_case, non_atomic_case, expected):
+    # remove any indendentation from using triple quotes
+    atomic_case = textwrap.dedent(atomic_case)
+    non_atomic_case = textwrap.dedent(non_atomic_case)
+    expected = textwrap.dedent(expected)
+
     atomic_tree     = ast.parse(atomic_case)
     non_atomic_tree = ast.parse(non_atomic_case)
     expected_tree   =  ast.parse(expected)
@@ -160,77 +168,75 @@ def test_expression(expr_type, atomic_case, non_atomic_case, expected):
 
 
 program_cases = [
-('sum_number_list',
-"""
-def acc(acc_op, f, ls):
-    v = 0
-    for e in ls:
-        v = acc_op(v, f(e))
-    return v
+    ('sum_number_list',
+    """
+        def acc(acc_op, f, ls):
+            v = 0
+            for e in ls:
+                v = acc_op(v, f(e))
+            return v
 
-double = lambda x: x * 2
-negative = lambda x: -x
-acc_add = lambda x, y: x + y
-acc_prod = lambda x, y: x * y
-ls = [1, 2, 3 * 4, 6, 7, double(100) + negative(10)]
-result = (acc(acc_add, double, ls), acc(acc_prod, negative, ls))
-"""
-),
+        double = lambda x: x * 2
+        negative = lambda x: -x
+        acc_add = lambda x, y: x + y
+        acc_prod = lambda x, y: x * y
+        ls = [1, 2, 3 * 4, 6, 7, double(100) + negative(10)]
+        result = (acc(acc_add, double, ls), acc(acc_prod, negative, ls))
+    """
+    ),
+    ('http://0pointer.de/blog/projects/mandelbrot.html',
+    """
+        import math, colorsys
 
-('http://0pointer.de/blog/projects/mandelbrot.html',
-"""
-import math, colorsys
+        dimensions = (800, 800)
+        scale = 1.0/(dimensions[0]/3)
+        center = (2.2, 1.5)       # Use this for Mandelbrot set
+        #center = (1.5, 1.5)       # Use this for Julia set
+        iterate_max = 100
+        colors_max = 50
 
-dimensions = (800, 800)
-scale = 1.0/(dimensions[0]/3)
-center = (2.2, 1.5)       # Use this for Mandelbrot set
-#center = (1.5, 1.5)       # Use this for Julia set
-iterate_max = 100
-colors_max = 50
+        # img = Image.new("RGB", dimensions)
+        # d = ImageDraw.Draw(img)
+        result = []
 
-# img = Image.new("RGB", dimensions)
-# d = ImageDraw.Draw(img)
-result = []
+        # Calculate a tolerable palette
+        palette = [0] * colors_max
+        for i in range(colors_max):
+            f = 1-abs((float(i)/colors_max-1)**15)
+            #r, g, b = colorsys.hsv_to_rgb(.66+f/3, 1-f/2, f)
+            r, g, b = (.66+f/3, 1-f/2, f)
+            palette[i] = (int(r*255), int(g*255), int(b*255))
 
-# Calculate a tolerable palette
-palette = [0] * colors_max
-for i in range(colors_max):
-    f = 1-abs((float(i)/colors_max-1)**15)
-    #r, g, b = colorsys.hsv_to_rgb(.66+f/3, 1-f/2, f)
-    r, g, b = (.66+f/3, 1-f/2, f)
-    palette[i] = (int(r*255), int(g*255), int(b*255))
+        # Calculate the mandelbrot sequence for the point c with start value z
+        def iterate_mandelbrot(c, z = 0):
+            for n in range(iterate_max + 1):
+                z = z*z +c
+                if abs(z) > 2:
+                    return n
+            return None
 
-# Calculate the mandelbrot sequence for the point c with start value z
-def iterate_mandelbrot(c, z = 0):
-    for n in range(iterate_max + 1):
-        z = z*z +c
-        if abs(z) > 2:
-            return n
-    return None
+        # Draw our image
+        for y in range(dimensions[1]):
+            for x in range(dimensions[0]):
+                c = complex(x * scale - center[0], y * scale - center[1])
 
-# Draw our image
-for y in range(dimensions[1]):
-    for x in range(dimensions[0]):
-        c = complex(x * scale - center[0], y * scale - center[1])
+                n = iterate_mandelbrot(c)            # Use this for Mandelbrot set
+                #n = iterate_mandelbrot(complex(0.3, 0.6), c)  # Use this for Julia set
 
-        n = iterate_mandelbrot(c)            # Use this for Mandelbrot set
-        #n = iterate_mandelbrot(complex(0.3, 0.6), c)  # Use this for Julia set
+                if n is None:
+                    v = 1
+                else:
+                    v = n/100.0
 
-        if n is None:
-            v = 1
-        else:
-            v = n/100.0
-
-        #d.point((x, y), fill = palette[int(v * (colors_max-1))])
-        result.append((x, y, palette[int(v * (colors_max - 1))]))
-"""
-),
-('meta-lifter-> lift lifter and then use it',
-"""
-%s
-result = unparse(ExpressionLifter().run('2 + 3 + 4 + sum([10, 20, 30]) * 40'))
-""" % open('plpy/rewrite/expr_lifter.py', 'r').read()
-)
+                #d.point((x, y), fill = palette[int(v * (colors_max-1))])
+                result.append((x, y, palette[int(v * (colors_max - 1))]))
+    """
+    ),
+    ('meta-lifter-> lift lifter and then use it',
+    """
+        %s\nresult = unparse(ExpressionLifter().run('2 + 3 + 4 + sum([10, 20, 30]) * 40'))
+    """ % open('plpy/rewrite/expr_lifter.py', 'r').read()
+    )
 ]
 
 def execute_program_from_ast(tree, output_var='result'):
@@ -240,6 +246,7 @@ def execute_program_from_ast(tree, output_var='result'):
     return _locals[output_var]
 
 def compare_orig_and_lifted_execution(src):
+    src = textwrap.dedent(src)
     orig_results = execute_program_from_ast(ast.parse(src))
     lifted = lift_expressions(src)
     # TODO
@@ -248,8 +255,8 @@ def compare_orig_and_lifted_execution(src):
     lifted_src = astunparse.unparse(lifted)
     lifted_results = execute_program_from_ast(ast.parse(lifted_src))
     assert orig_results == lifted_results
-    
+
 @pytest.mark.parametrize("program_name,program_src", program_cases)
 def test_execution(program_name, program_src):
     compare_orig_and_lifted_execution(program_src)
-    
+

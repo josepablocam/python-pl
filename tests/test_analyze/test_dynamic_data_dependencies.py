@@ -1,13 +1,13 @@
 import ast
 import astunparse
-import pytest
 import sys
 import textwrap
 
 import numpy as np
+import pytest
 
-from plpy.analyze import dynamic_data_dependencies as d3
 from plpy.analyze.dynamic_trace_events import *
+from plpy.analyze import dynamic_data_dependencies as d3
 
 
 class BasicTracer(object):
