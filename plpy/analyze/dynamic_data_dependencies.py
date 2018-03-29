@@ -1,6 +1,7 @@
 import ast
 import astunparse
 import inspect
+import logging
 import sys
 
 import matplotlib.pyplot as plt
@@ -11,13 +12,14 @@ import pandas as pd
 
 from .dynamic_trace_events import *
 
+logging.basicConfig(
+    filename="test.log",
+    level=logging.DEBUG,
+    format="%(asctime)s:%(levelname)s:%(message)s"
+    )
+log = logging.getLogger(__name__)
+
 # helper functions
-DEBUG = False
-def print_debug(msg):
-    if DEBUG:
-        print(msg)
-
-
 def to_ast_node(line):
     return ast.parse(line).body[0]
 
@@ -32,6 +34,7 @@ def get_function_obj(frame):
     # can't get function object if we don't actually
     # have the frame
     if frame is None or frame.f_back is None:
+        log.debug('Call frame or caller frame was None')
         return None
     # note that this hack is based on the info
     # described in
@@ -40,24 +43,24 @@ def get_function_obj(frame):
         parent = get_caller_frame(frame)
         parent_info = inspect.getframeinfo(parent)
         if parent_info.code_context:
-            print('going through parent_info')
+            log.debug('Retrieving function object through caller frame')
             src_line = parent_info.code_context[0].strip()
-            print('source: %s' % src_line)
+            log.debug('Call (based on parent frame): %s' % src_line)
             ast_node = to_ast_node(src_line)
             func_str = astunparse.unparse(ast_node.value.func)
         else:
             # we can fall back on looking at the routine name directly
             # rather than how it was called...I believe this is less precise though
             # because we won't necessarily get the exact instance that called it
-            print("going through co_name")
+            log.debug('Retrieving function object through co_name')
             func_str = frame.f_code.co_name
         func_obj = eval(func_str, parent.f_globals, parent.f_locals)
         return func_obj
     except NameError:
-        print("none found")
+        log.exception('Failed to look up name for function object')
         return None
     except SyntaxError:
-        print("block")
+        log.error('Failed to parse call', exc_info=True)
         return None
 
 def get_function_unqual_name(frame):
@@ -143,19 +146,19 @@ class DynamicDataTracer(object):
         self.orig_tracer = None
 
     def _allocate_event_id(self):
-        print_debug("allocate event id")
+        log.info('Allocated new event id')
         _id = self.event_counter
         self.event_counter += 1
         return _id
 
     def _called_by_user(self, frame):
         """ only trace calls to functions directly invoked by the user """
-        print_debug('called_by_user')
+        log.info('Current frame is for a user-called function')
         return inspect.getfile(get_caller_frame(frame)) == self.file_path
 
     def _defined_by_user(self, frame):
         """ only trace lines inside body of functions that are defined by user in same file """
-        print_debug('-defined_by_user')
+        log.info('Current frame is for a user-defined function')
         try:
             return inspect.getfile(frame) == self.file_path
         except TypeError:
@@ -166,7 +169,7 @@ class DynamicDataTracer(object):
         # we strip before returning the line as
         # we often use this line to parse a node
         # and any kind of indentation will lead to SyntaxError raised in ast.parse
-        print_debug('-getsource')
+        log.info('Retrieving source for frame')
         if self._defined_by_user(frame):
             lineno = inspect.getlineno(frame)
             return self.src_lines[lineno - 1].strip()
@@ -174,10 +177,10 @@ class DynamicDataTracer(object):
         try:
             return inspect.getsource(frame).strip()
         except IOError:
+            log.exception('Unable to retrieve source for frame')
             return None
 
     def trace(self, frame, event, arg):
-        print_debug('trace')
         if event == 'line':
             return self.trace_line(frame, event, arg)
 
@@ -198,10 +201,11 @@ class DynamicDataTracer(object):
         # by returning this function that just traces returns, we can make
         # sure that exit-call event is created and added to our trace
         if event == 'return':
+            log.info('Trace return of external function')
             return self.trace_return(frame, event, arg)
 
     def trace_line(self, frame, event, arg):
-        print_debug('trace_line')
+        log.info('Trace line')
         # Note that any C-based function (e.g. max/len etc)
         # won't actually trigger a call, so we need to see what to do here
         line = self._getsource(frame)
@@ -212,11 +216,12 @@ class DynamicDataTracer(object):
             trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
             self.trace_events.append(trace_event)
         except SyntaxError:
-            print_debug('Syntax Error in trace: %s' % line)
+            log.exception('Syntax error while tracing line: %s' % line)
             self.trace_errors.append((frame, event, arg, line))
         return self.trace
 
     def get_load_references_from_line(self, line):
+        log.info('Get references from line')
         node = to_ast_node(line)
 
         # assignments can trigger loads as well
@@ -251,7 +256,7 @@ class DynamicDataTracer(object):
         Load the memory locations for these references using the environment
         available to the frame provided
         """
-        print_debug('get_mem_locs')
+        log.info('Get memory locations for references')
 
         _locals = frame.f_locals
         _globals = frame.f_globals
@@ -265,7 +270,7 @@ class DynamicDataTracer(object):
         return mem_locs
 
     def trace_call(self, frame, event, arg):
-        print_debug('trace_call')
+        log.info('Trace call')
 
         # retrieve the actual function being called
         func_obj = get_function_obj(frame)
@@ -273,15 +278,15 @@ class DynamicDataTracer(object):
         # unable to do much here
         # so we basically just stop tracing until the next call comes around
         if func_obj is None:
-            print('func_obj_none: %s' % self._getsource(frame))
+            log.warn('Function object was None for source: %s' % self._getsource(frame))
             return None
 
         if is_stub_call(func_obj):
-            print("stub call")
+            log.info('Function object is a stub')
             return self.trace_stub(frame, event, arg)
 
         if self._called_by_user(frame):
-            print('appending called by user')
+            log.info('Collecting call made by user')
             # call site
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
@@ -306,7 +311,6 @@ class DynamicDataTracer(object):
             event_id = self._allocate_event_id()
             trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
             self.trace_events.append(trace_event)
-            print('adding to queue: %s' % self.trace_events[-1])
 
         # functions that are defined by the user
         # will have line-level tracing
@@ -314,13 +318,13 @@ class DynamicDataTracer(object):
             return self.trace
         else:
             # external functions only get the paired exit-call event
-            # print("not user defined: %s" % self._getsource(frame))
-            print('not user defined function')
+            log.info('Function is external, tracing with trace_external')
             return self.trace_external
 
     def trace_return(self, frame, event, arg):
-        print_debug('trace-return')
+        log.info('Trace return')
         if self._called_by_user(frame):
+            log.info('Return is from a user-called function')
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
@@ -330,26 +334,30 @@ class DynamicDataTracer(object):
             self.trace_events.append(trace_event)
 
     def trace_stub(self, frame, event, arg):
-        print_debug('trace_stub')
+        log.info('Tracing stub')
         stub_obj = get_function_obj(frame)
         stub_event = None
         if stub_obj == memory_update_stub:
             stub_event = self.consume_memory_update_stub(frame, event, arg)
         else:
-            raise Exception("Unknown stub type")
+            raise Exception("Unknown stub qualified name: %s" % get_function_qual_name(stub_obj))
         # remove stub from trace of events
         self.trace_events.pop()
         if stub_event:
             self.trace_events.append(stub_event)
 
     def consume_memory_update_stub(self, frame, event, arg):
-        print_debug('consume_memory_update_stub')
+        log.info('Consuming memory_update_stub call event')
         # extract line no, and remove stuff
         caller = frame.f_back
         # the actual line that triggered this stub call is one line up
         lineno = inspect.getlineno(caller) - 1
         arginfo = inspect.getargvalues(frame)
-        assert len(arginfo.args) == 2, 'assignment stub should have only 2 argument: list of names and list of values'
+        if len(arginfo.args) != 2:
+            log.error('memory_update_stub should only have 2 argumnets: list of names and list of values')
+            arginfo.locals = {}
+            log.error('ArgumentInfo: %s' % arginfo.args)
+            raise TypeError('memory_update_stub should have 2 arguments')
         # memory locations that need to be updated
         names = arginfo.locals[arginfo.args[0]]
         values = arginfo.locals[arginfo.args[1]]
@@ -360,27 +368,33 @@ class DynamicDataTracer(object):
         return trace_event
 
     def setup(self):
-        print_debug('setup')
+        log.info('Setting up tracing function')
         self.orig_tracer = sys.gettrace()
         sys.settrace(self.trace)
 
     def shutdown(self):
-        print_debug('shutdown')
         sys.settrace(self.orig_tracer)
+        # Note: we call this log after
+        # because otherwise the tracing gets triggered
+        # for the logging function...
+        # TODO: figure out better fix
+        log.info('Shutting down tracing function')
 
     def add_stubs(self, src):
-        print_debug('add_stubs')
+        log.info('Adding any stubs to provided source code')
         tree = ast.parse(src)
         ext_tree = AddMemoryUpdateStubs(stub_name=memory_update_stub.__qualname__).visit(tree)
         return astunparse.unparse(ext_tree)
 
     def clear(self):
+        log.info('Clear internal state of tracer')
         self.file_path = None
         self.trace_events = []
         self.trace_errors = []
         self.event_counter = 0
 
     def run(self, file_path):
+        log.info('Running tracer')
         self.clear()
 
         if os.path.exists(file_path):
