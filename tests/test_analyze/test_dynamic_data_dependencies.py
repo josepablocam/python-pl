@@ -216,27 +216,27 @@ def test_function_called_by_user():
 def standardize_source(src):
     return astunparse.unparse(ast.parse(src))
 
-def check_memory_update(event, num_references):
+def check_memory_update(event, num_updates):
     assert isinstance(event, MemoryUpdate)
     # has right set of mem locations
-    assert len(event.mem_locs) == num_references
+    assert len(event.mem_locs) == num_updates
 
 def check_exec_line(event, line):
     assert isinstance(event, ExecLine)
     assert standardize_source(event.line) == standardize_source(line)
 
-def check_enter_call(event, details):
+def check_enter_call(event, qualname, call_args, is_method):
     assert isinstance(event, EnterCall)
     print(event.details)
-    assert event.details['qualname'] == details['qualname']
-    assert set(event.details['abstract_call_args'].keys()) == details['abstract_call_args']
-    assert event.details['is_method'] == details['is_method']
+    assert event.details['qualname'] == qualname
+    assert set(event.details['abstract_call_args'].keys()) == call_args
+    assert event.details['is_method'] == is_method
 
-def check_exit_call(event, details):
+def check_exit_call(event, details=None):
     assert isinstance(event, ExitCall)
 
-def make_event_check(fun, details):
-    return lambda x: fun(x, details)
+def make_event_check(fun, *args, **kwargs):
+    return lambda x: fun(x, *args, **kwargs)
 
 def basic_case_1():
         src = """
@@ -249,17 +249,17 @@ def basic_case_1():
 
         expected_event_checks = [
             # x = 10
-            make_event_check(check_exec_line, 'x = 10'),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_exec_line, line='x = 10'),
+            make_event_check(check_memory_update, num_updates=1),
             # y = 20
-            make_event_check(check_exec_line, 'y = 20'),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_exec_line, line='y = 20'),
+            make_event_check(check_memory_update, num_updates=1),
             # z = f(x, y)
-            make_event_check(check_exec_line, 'z = f(x, y)'),
-            make_event_check(check_enter_call, {'qualname': 'f', 'abstract_call_args': set(['x', 'y']), 'is_method': False}),
-            make_event_check(check_exec_line, 'return x + y'),
-            make_event_check(check_exit_call, None),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_exec_line, line='z = f(x, y)'),
+            make_event_check(check_enter_call, qualname='f', call_args=set(['x', 'y']), is_method=False),
+            make_event_check(check_exec_line, line='return x + y'),
+            make_event_check(check_exit_call),
+            make_event_check(check_memory_update, num_updates=1),
         ]
         return textwrap.dedent(src), expected_event_checks
 
@@ -276,19 +276,19 @@ def basic_case_2():
 
         expected_event_checks = [
             # x = 10
-            make_event_check(check_exec_line, 'x = 10'),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_exec_line, line='x = 10'),
+            make_event_check(check_memory_update, num_updates=1),
             # y = 20
-            make_event_check(check_exec_line, 'y = 20'),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_exec_line, line='y = 20'),
+            make_event_check(check_memory_update, num_updates=1),
             # z = A.f(x, y)
-            make_event_check(check_exec_line, 'z = A.f(x, y)'),
+            make_event_check(check_exec_line, line='z = A.f(x, y)'),
             # note that is_method is False as staticmethods are indistinguishable from function's in Python 3.*
             # in particular, inspect.ismethod returns False
-            make_event_check(check_enter_call, {'qualname': 'A.f', 'abstract_call_args': set(['x', 'y']), 'is_method': False}),
-            make_event_check(check_exec_line, 'return x + y'),
-            make_event_check(check_exit_call, None),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_enter_call, qualname='A.f', call_args=set(['x', 'y']), is_method=False),
+            make_event_check(check_exec_line, line='return x + y'),
+            make_event_check(check_exit_call),
+            make_event_check(check_memory_update, num_updates=1),
         ]
         return textwrap.dedent(src), expected_event_checks
 
@@ -308,28 +308,28 @@ def basic_case_3():
 
         expected_event_checks = [
             # x = 10
-            make_event_check(check_exec_line, 'x = 10'),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_exec_line, line='x = 10'),
+            make_event_check(check_memory_update, num_updates=1),
             # y = 10
-            make_event_check(check_exec_line, 'y = 20'),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_exec_line, line='y = 20'),
+            make_event_check(check_memory_update, num_updates=1),
             # obj = A(10)
-            make_event_check(check_exec_line, 'obj = A(10)'),
+            make_event_check(check_exec_line, line='obj = A(10)'),
             # note that the constructor call is not yet a 'method' as there is no instance bount to it at the time of function entry
-            make_event_check(check_enter_call, {'qualname': 'A', 'abstract_call_args': set(['self', 'x']), 'is_method': False}),
-            make_event_check(check_exec_line, 'self.v = x'),
+            make_event_check(check_enter_call, qualname='A', call_args=set(['self', 'x']), is_method=False),
+            make_event_check(check_exec_line, line='self.v = x'),
             # self, and self.v
-            make_event_check(check_memory_update, 2),
-            make_event_check(check_exit_call, None),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_memory_update, num_updates=2),
+            make_event_check(check_exit_call),
+            make_event_check(check_memory_update, num_updates=1),
             # z = obj.f(x, y)
-            make_event_check(check_exec_line, 'z = obj.f(x, y)'),
+            make_event_check(check_exec_line, line='z = obj.f(x, y)'),
             # note that is_method is False as staticmethods are indistinguishable from function's in Python 3.*
             # in particular, inspect.ismethod returns False
-            make_event_check(check_enter_call, {'qualname': 'A.f', 'abstract_call_args': set(['self', 'x', 'y']), 'is_method': True}),
-            make_event_check(check_exec_line, 'return x + y + self.v'),
-            make_event_check(check_exit_call, None),
-            make_event_check(check_memory_update, 1),
+            make_event_check(check_enter_call, qualname='A.f', call_args=set(['self', 'x', 'y']), is_method=True),
+            make_event_check(check_exec_line, line='return x + y + self.v'),
+            make_event_check(check_exit_call),
+            make_event_check(check_memory_update, num_updates=1),
         ]
         return textwrap.dedent(src), expected_event_checks
 
