@@ -161,13 +161,16 @@ class DynamicDataTracer(object):
             return False
 
     def _getsource(self, frame):
+        # we strip before returning the line as
+        # we often use this line to parse a node
+        # and any kind of indentation will lead to SyntaxError raised in ast.parse
         print_debug('-getsource')
         if self._defined_by_user(frame):
             lineno = inspect.getlineno(frame)
-            return self.src_lines[lineno - 1]
+            return self.src_lines[lineno - 1].strip()
         # try using inspect if not
         try:
-            return inspect.getsource(frame)
+            return inspect.getsource(frame).strip()
         except IOError:
             return None
 
@@ -207,7 +210,7 @@ class DynamicDataTracer(object):
             trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
             self.trace_events.append(trace_event)
         except SyntaxError:
-            print_debug('Syntax error')
+            print_debug('Syntax Error in trace: %s' % line)
             self.trace_errors.append((frame, event, arg, line))
         return self.trace
 
@@ -304,7 +307,8 @@ class DynamicDataTracer(object):
             return self.trace
         else:
             # external functions only get the paired exit-call event
-            print("not user defined: %s" % self._getsource(frame))
+            # print("not user defined: %s" % self._getsource(frame))
+            print('not user defined function')
             return self.trace_external
 
     def trace_return(self, frame, event, arg):
