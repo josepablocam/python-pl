@@ -87,6 +87,7 @@ def draw(g, dot_layout=True):
     # use better graphviz layout
     pos = nx.drawing.nx_pydot.graphviz_layout(g) if dot_layout else None
     nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
+    return plt, plt.gcf()
 
 def main(args):
     with open(args.input_path, 'rb') as f:
@@ -97,8 +98,10 @@ def main(args):
         pickle.dump(graph, f)
 
     if args.draw:
-        _plot = draw(graph)
-        plt.show(block=True)
+        plt, plot_fig = draw(graph)
+        plot_path = args.output_path + '_graph.pdf'
+        plt.savefig(plot_path)
+        plt.show(block=args.block)
 
 if __name__ == '__main__':
     parser = ArgumentParser(description='Build networkx graph from tracer (with events)')
@@ -106,5 +109,6 @@ if __name__ == '__main__':
     parser.add_argument('output_path', type=str, help='Path to store pickled networkx graph')
     parser.add_argument('-i', '--ignore_unknown', action='store_true', help='Exclude unknown memory locations from graph')
     parser.add_argument('-d', '--draw', action='store_true', help='Draw graph and display')
+    parser.add_argument('-b', '--block', action='store_true', help='Block when displaying graph')
     args = parser.parse_args()
     main(args)

@@ -9,6 +9,10 @@ import os
 import pickle
 import sys
 
+# This import is a hack...we export a third party lib
+# so that a lot of the loading for modules etc is done
+# outside of the tracing...
+#import numpy as np
 
 from .dynamic_trace_events import *
 
@@ -150,6 +154,45 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         return to_ast_node(call_str)
 
 
+# TODO: consider alternatives
+# importing triggers a ton calls
+# and we don't really care about these
+# so our solution for now is collect and execute
+# all imports upfront (this includes imports stated inside functions)
+# before tracing and passing on the globals and locals created as part of that
+class RunImports(ast.NodeVisitor):
+    def __init__(self):
+        self.imports = []
+
+    def visit_Import(self, node):
+        self.imports.append(node)
+
+    def visit_ImportFrom(self, node):
+        self.imports.append(node)
+
+    def execute_imports(self):
+        _globals = {}
+        _locals = {}
+        for node in self.imports:
+            stmt = astunparse.unparse(node)
+            log.info('Running import: %s' % stmt)
+            exec(stmt, _globals, _locals)
+        return _globals, _locals
+
+    def run(self, tree):
+        if not isinstance(tree, ast.Module):
+            tree = ast.parse(tree)
+        self.visit(tree)
+        return self.execute_imports()
+
+# some functions need to be avoided
+# in tracing
+# taken from
+# https://github.com/DonJayamanne/pythonVSCode/blob/master/pythonFiles/PythonTools/visualstudio_py_debugger.py
+DONT_TRACE = []
+DONT_TRACE.append('<frozen importlib._bootstrap>')
+DONT_TRACE.append('<frozen importlib._bootstrap_external>')
+
 class DynamicDataTracer(object):
     def __init__(self):
         self.file_path = None
@@ -214,15 +257,23 @@ class DynamicDataTracer(object):
         # should take place, we never create the corresponding exit-call event
         # by returning this function that just traces returns, we can make
         # sure that exit-call event is created and added to our trace
-        if event == 'return':
-            log.info('Trace return of external function')
-            return self.trace_return(frame, event, arg)
+        if (event == 'call' or event == 'return') and self._called_by_user(frame):
+            log.info('Found user-called frame in trace_external')
+            return self.trace(frame, event, arg)
+        #
+        # if event == 'call' and self._called_by_user(frame):
+        #     return self.trace(frame, event, arg)
+        #
+        # if event == 'return':
+        #     log.info('Trace return of external function')
+        #     return self.trace(frame, event, arg)
 
     def trace_line(self, frame, event, arg):
         log.info('Trace line')
         # Note that any C-based function (e.g. max/len etc)
         # won't actually trigger a call, so we need to see what to do here
         line = self._getsource(frame)
+        log.info('Line: %s' % line)
         event_id = self._allocate_event_id()
         try:
             load_references = self.get_load_references_from_line(line)
@@ -287,7 +338,19 @@ class DynamicDataTracer(object):
         return mem_locs
 
     def trace_call(self, frame, event, arg):
-        log.info('Trace call')
+        if inspect.getframeinfo(frame).filename in DONT_TRACE:
+            log.info('Found call to DONT_TRACE functions, ignoring')
+            return self.trace_external
+
+        log.info('Trace call: %s' % str(inspect.getframeinfo(frame)))
+        log.info('Called by user: %s' % self._called_by_user(frame))
+
+        # imports are treated as a function call
+        line = self._getsource(frame)
+        if line is None:
+            log.warn('Empty source for trace call: %s' % str(inspect.getframeinfo(frame)))
+            log.warn('Called by user: %s' % self._called_by_user(frame))
+            return self.trace_external
 
         # retrieve the actual function being called
         func_obj = get_function_obj(frame)
@@ -428,20 +491,21 @@ class DynamicDataTracer(object):
         instrumented_file_path = '_instrumented.py'
         with open(instrumented_file_path, 'w') as f:
             f.write(src)
-
         self.file_path = instrumented_file_path
 
-        # compile, execute instrumented version
-        namespace = {
-            '__name__'      : '__main__',
-            '__file__'      : self.file_path,
-            '__builtins__'  : __builtins__,
-            # stubs
-            memory_update_stub.__qualname__: memory_update_stub,
-        }
+        # run imports before hand
+        log.info('Running upfront imports to avoid tracing')
+        _globals, _locals = RunImports().run(src)
+        # add in additional mappings
+        _globals['__name__'] = '__main__'
+        _globals['__file__'] = self.file_path
+        _globals['__builtins__'] = __builtins__
+        # stubs
+        _globals[memory_update_stub.__qualname__] =  memory_update_stub
         compiled = compile(src, filename=self.file_path, mode='exec')
         self.setup()
-        exec(compiled, namespace)
+        # pass in both to make sure imported modules are there during tracing
+        exec(compiled, _globals, _locals)
         self.shutdown()
 
 
