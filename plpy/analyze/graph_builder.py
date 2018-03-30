@@ -1,5 +1,4 @@
 from argparse import ArgumentParser
-import matplotlib.pyplot as plt
 import networkx as nx
 import pickle
 
@@ -82,6 +81,7 @@ class DynamicTraceToGraph(object):
 
 
 def draw(g, dot_layout=True):
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(1)
     labels = nx.get_node_attributes(g, GRAPH_SRC_ATTRIBUTE)
     # use better graphviz layout

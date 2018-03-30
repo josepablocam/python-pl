@@ -5,14 +5,10 @@ import ast
 import astunparse
 import inspect
 import logging
+import os
 import pickle
 import sys
 
-import matplotlib.pyplot as plt
-plt.ion()
-import networkx as nx
-import os
-import pandas as pd
 
 from .dynamic_trace_events import *
 
