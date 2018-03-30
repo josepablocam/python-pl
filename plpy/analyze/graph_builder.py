@@ -5,7 +5,7 @@ from .dynamic_trace_events import *
 
 GRAPH_SRC_ATTRIBUTE = 'src'
 
-class TraceToGraph(object):
+class DynamicTraceToGraph(object):
     def __init__(self, include_unknown=True):
         self.counter = 0
         # note that pydot doesn't like negatives...
