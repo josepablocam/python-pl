@@ -8,6 +8,13 @@ setup(name='plpy',
       author_email='jcamsan@mit.edu',
       license='MIT',
       packages=['plpy'],
+      install_requires=[
+          'astunparse==1.5.0',
+          'matplotlib==2.2.2',
+          'networkx==1.11',
+          'pydot==1.2.4',
+          'pandas==0.22.0'
+      ],
       setup_requires=['pytest-runner'],
       tests_require=['pytest'],
       zip_safe=False,
