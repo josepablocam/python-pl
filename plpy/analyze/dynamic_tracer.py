@@ -210,12 +210,12 @@ class DynamicDataTracer(object):
 
     def _called_by_user(self, frame):
         """ only trace calls to functions directly invoked by the user """
-        log.info('Current frame is for a user-called function')
+        log.info('Checking if user called function')
         return inspect.getfile(get_caller_frame(frame)) == self.file_path
 
     def _defined_by_user(self, frame):
         """ only trace lines inside body of functions that are defined by user in same file """
-        log.info('Current frame is for a user-defined function')
+        log.info('Checking if frame is for user defined function')
         try:
             return inspect.getfile(frame) == self.file_path
         except TypeError:
@@ -228,6 +228,7 @@ class DynamicDataTracer(object):
         # and any kind of indentation will lead to SyntaxError raised in ast.parse
         log.info('Retrieving source for frame')
         if self._defined_by_user(frame):
+            log.info('Function is defined by user, fetching source')
             lineno = inspect.getlineno(frame)
             return self.src_lines[lineno - 1].strip()
         # try using inspect if not
@@ -395,6 +396,7 @@ class DynamicDataTracer(object):
         # functions that are defined by the user
         # will have line-level tracing
         if self._defined_by_user(frame):
+            log.info('Call is defined by user, continuing standard trace')
             return self.trace
         else:
             # external functions only get the paired exit-call event
