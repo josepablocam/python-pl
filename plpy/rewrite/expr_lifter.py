@@ -4,15 +4,15 @@
 # the branches, but not the entire statement, as there may be dependencies
 # between rewritten body and the test condition, which complicates things
 
+from argparse import ArgumentParser
 import ast
 from copy import deepcopy
 
 from astunparse import unparse
 
 
-# TODO:
+# FIXME:
 # remove unnecessary deepcopy
-# add tests
 # add documentation
 
 
@@ -495,10 +495,16 @@ class ExpressionLifter(ast.NodeTransformer):
 def lift_expressions(src):
     return ExpressionLifter().run(src)
 
+def main(args):
+    src = open(args.input_path, 'r').read()
+    lifted_tree = lift_expressions(src)
+    lifted_src = unparse(lifted_tree)
+    with open(args.output_path, 'w') as f:
+        f.write(lifted_src)
 
-
-
-
-
-
-
+if __name__ == '__main__':
+    parser = ArgumentParser(description='Expression lifter')
+    parser.add_argument('input_path', type=str, help='Path to input source file')
+    parser.add_argument('output_path', type=str, help='Path to output file')
+    args = parser.parse_args()
+    main(args)
