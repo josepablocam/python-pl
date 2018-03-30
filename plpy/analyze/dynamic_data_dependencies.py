@@ -231,7 +231,10 @@ class DynamicDataTracer(object):
             self.trace_events.append(trace_event)
         except SyntaxError:
             log.exception('Syntax error while tracing line: %s' % line)
-            self.trace_errors.append((frame, event, arg, line))
+            # keeping actual frame does little to help debugging since it
+            # gets updated during execution
+            frameinfo = inspect.getframeinfo(frame)
+            self.trace_errors.append((frameinfo, event, arg, line))
         return self.trace
 
     def get_load_references_from_line(self, line):
