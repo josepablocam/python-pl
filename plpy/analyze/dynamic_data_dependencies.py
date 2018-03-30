@@ -1,7 +1,11 @@
+# Add dynamic tracing to a script, records 'trace events'
+# that can be used to build up data dependency information later on
+from argparse import ArgumentParser
 import ast
 import astunparse
 import inspect
 import logging
+import pickle
 import sys
 
 import matplotlib.pyplot as plt
@@ -443,4 +447,24 @@ class DynamicDataTracer(object):
         self.setup()
         exec(compiled, namespace)
         self.shutdown()
+
+
+def main(args):
+    src = open(args.input_path).read()
+    tracer = DynamicDataTracer()
+    tracer.run(src)
+    with open(args.output_path, 'wb') as f:
+        pickle.dump(tracer, f)
+
+
+if __name__ == '__main__':
+    parser = ArgumentParser(description='Execute lifted script with dynamic tracing')
+    parser.add_argument('input_path', type=str, help='Path to lifted source')
+    parser.add_argument('output_path', type=str, help='Path for pickled tracer with results')
+    args = parser.parse_args()
+    try:
+        main(args)
+    except:
+        import pdb
+        pdb.post_mortem()
 
