@@ -1,17 +1,20 @@
+from argparse import ArgumentParser
 import matplotlib.pyplot as plt
 import networkx as nx
+import pickle
 
+from .dynamic_tracer import DynamicDataTracer
 from .dynamic_trace_events import *
 
 GRAPH_SRC_ATTRIBUTE = 'src'
 
 class DynamicTraceToGraph(object):
-    def __init__(self, include_unknown=True):
+    def __init__(self, ignore_unknown=False):
         self.counter = 0
         # note that pydot doesn't like negatives...
         self.unknown_id = self.allocate_node_id()
         self.graph = nx.DiGraph()
-        self.include_unknown = include_unknown
+        self.ignore_unknown = ignore_unknown
         self.lineno_to_nodeid = {}
         self.mem_loc_to_lineno = {}
         self.consuming = []
@@ -32,7 +35,7 @@ class DynamicTraceToGraph(object):
         dependencies = []
         # ignore mem locations that are unknown
         for name, ml in event.uses_mem_locs.items():
-            if self.include_unknown or ml in self.mem_loc_to_lineno:
+            if (not self.ignore_unknown) or ml in self.mem_loc_to_lineno:
                 ml_id = self.get_latest_node_id_for_mem_loc(name, ml)
                 dependencies.append((ml_id, node_id))
 
@@ -64,17 +67,18 @@ class DynamicTraceToGraph(object):
     def handle_ExitCall(self, event):
         self.consuming.pop()
 
-    def run(self, trace_events):
+    def run(self, tracer):
+        assert isinstance(tracer, DynamicDataTracer), 'This graph builder only works for dynamic data traces'
+
         handlers = {
             ExecLine: self.handle_ExecLine,
             MemoryUpdate: self.handle_MemoryUpdate,
             EnterCall: self.handle_EnterCall,
             ExitCall: self.handle_ExitCall,
         }
-        for e in trace_events:
+        for e in tracer.trace_events:
             handlers[type(e)](e)
         return self.graph
-
 
 
 def draw(g, dot_layout=True):
@@ -83,4 +87,24 @@ def draw(g, dot_layout=True):
     # use better graphviz layout
     pos = nx.drawing.nx_pydot.graphviz_layout(g) if dot_layout else None
     nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
-    plt.show()
+
+def main(args):
+    with open(args.input_path, 'rb') as f:
+        tracer = pickle.load(f)
+    builder = DynamicTraceToGraph(ignore_unknown=args.ignore_unknown)
+    graph = builder.run(tracer)
+    with open(args.output_path, 'wb') as f:
+        pickle.dump(graph, f)
+
+    if args.draw:
+        _plot = draw(graph)
+        plt.show(block=True)
+
+if __name__ == '__main__':
+    parser = ArgumentParser(description='Build networkx graph from tracer (with events)')
+    parser.add_argument('input_path', type=str, help='Path to pickled tracer (with events)')
+    parser.add_argument('output_path', type=str, help='Path to store pickled networkx graph')
+    parser.add_argument('-i', '--ignore_unknown', action='store_true', help='Exclude unknown memory locations from graph')
+    parser.add_argument('-d', '--draw', action='store_true', help='Draw graph and display')
+    args = parser.parse_args()
+    main(args)
