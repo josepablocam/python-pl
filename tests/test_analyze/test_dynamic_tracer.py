@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from plpy.analyze.dynamic_trace_events import *
-from plpy.analyze import dynamic_data_dependencies as d3
+from plpy.analyze import dynamic_tracer as dt
 
 
 class BasicTracer(object):
@@ -48,7 +48,7 @@ class BasicTracer(object):
 
 # test helpers
 def test_to_ast_node():
-    node = d3.to_ast_node('x + 2')
+    node = dt.to_ast_node('x + 2')
     assert astunparse.unparse(node).strip() == '(x + 2)'
 
 def test_get_caller_frame():
@@ -64,13 +64,13 @@ def test_get_caller_frame():
 
     g_frame = tracer.result_acc[0]
     f_frame = tracer.result_acc[1]
-    assert d3.get_caller_frame(f_frame) == g_frame
+    assert dt.get_caller_frame(f_frame) == g_frame
 
 
 def get_basic_function():
     def f():
         return
-    tracer = BasicTracer(d3.get_function_obj)
+    tracer = BasicTracer(dt.get_function_obj)
     with tracer:
         f()
     return tracer.result_acc[0], f
@@ -80,7 +80,7 @@ def get_basic_method():
         def f(self):
             return
     val = BasicClass()
-    tracer = BasicTracer(d3.get_function_obj)
+    tracer = BasicTracer(dt.get_function_obj)
     with tracer:
         val.f()
     return tracer.result_acc[0], val.f
@@ -90,7 +90,7 @@ def get_basic_static_method():
         @staticmethod
         def f():
             return
-    tracer = BasicTracer(d3.get_function_obj)
+    tracer = BasicTracer(dt.get_function_obj)
     with tracer:
         BasicClass.f()
     return tracer.result_acc[0], BasicClass.f
@@ -101,7 +101,7 @@ def get_basic_nested_function():
             return
         f()
         return f
-    tracer = BasicTracer(d3.get_function_obj)
+    tracer = BasicTracer(dt.get_function_obj)
     with tracer:
         res = g()
     return tracer.result_acc[1], res
@@ -114,7 +114,7 @@ def test_get_function_obj(get_func):
 def test_get_function_unqual_name():
     def f():
         return
-    tracer = BasicTracer(d3.get_function_unqual_name)
+    tracer = BasicTracer(dt.get_function_unqual_name)
     with tracer:
         f()
     assert tracer.result_acc[0] == 'f'
@@ -127,7 +127,7 @@ class BasicDummyClass(object):
         return
 
 def test_get_function_qual_name():
-    tracer = BasicTracer(d3.get_function_qual_name)
+    tracer = BasicTracer(dt.get_function_qual_name)
     val = BasicDummyClass()
     with tracer:
         val.m()
@@ -138,8 +138,8 @@ def test_get_function_qual_name():
 @pytest.mark.parametrize('node_str,full_expected,all_but_first_expected', [('a', ['a'], []), ('a.b.c', ['a', 'a.b', 'a.b.c'], ['a', 'a.b'])])
 def test_extract_references(node_str, full_expected, all_but_first_expected):
     node = ast.parse(node_str)
-    refs = set(d3.get_nested_references(node))
-    refs_but_first = set(d3.get_nested_references(node, exclude_first=True))
+    refs = set(dt.get_nested_references(node))
+    refs_but_first = set(dt.get_nested_references(node, exclude_first=True))
 
     full_expected = set(full_expected)
     all_but_first_expected = set(all_but_first_expected)
@@ -148,7 +148,7 @@ def test_extract_references(node_str, full_expected, all_but_first_expected):
     assert refs_but_first == all_but_first_expected, 'References do not match'
 
 def test_register_assignment_stubs():
-    stubber = d3.AddMemoryUpdateStubs('_stub')
+    stubber = dt.AddMemoryUpdateStubs('_stub')
     src = "x = 1; y = f(); z += 1"
     expected = "x = 1; _stub(['x'], [x]); y = f(); _stub(['y'], [y]); z += 1; _stub(['z'], [z])"
     with_stubs = stubber.visit(ast.parse(src))
@@ -176,17 +176,17 @@ def test_register_assignment_stubs():
     assert ast.dump(with_imports_with_stubs) == ast.dump(ast.parse(expected_with_imports))
 
 def test_is_stub_call():
-    tracer = BasicTracer(d3.get_function_obj)
+    tracer = BasicTracer(dt.get_function_obj)
     with tracer:
-        d3.memory_update_stub(['var'], [10])
-    assert d3.is_stub_call(tracer.result_acc[0]), 'Calling a stub function should yield true'
+        dt.memory_update_stub(['var'], [10])
+    assert dt.is_stub_call(tracer.result_acc[0]), 'Calling a stub function should yield true'
 
     tracer.result_acc = []
     def f():
         return
     with tracer:
         f()
-    assert not d3.is_stub_call(tracer.result_acc[0]), 'Calling non-stub function should yield false'
+    assert not dt.is_stub_call(tracer.result_acc[0]), 'Calling non-stub function should yield false'
 
 @pytest.mark.parametrize(
     '_input,expected',
@@ -204,13 +204,13 @@ def test_is_stub_call():
     ]
 )
 def test_get_load_references_from_line(_input, expected):
-    tracer = d3.DynamicDataTracer()
+    tracer = dt.DynamicDataTracer()
     refs = tracer.get_load_references_from_line(_input)
     assert refs == set(expected), 'Load references do not match'
 
 def test_function_defined_by_user():
     # make tracer think current file is user file
-    tracer = d3.DynamicDataTracer()
+    tracer = dt.DynamicDataTracer()
     tracer.file_path = __file__
     helper = BasicTracer(tracer._defined_by_user)
     with helper:
@@ -226,7 +226,7 @@ def test_function_defined_by_user():
     assert not helper.result_acc[0], 'Function was not defined by user in this test file'
 
 def test_function_called_by_user():
-    tracer = d3.DynamicDataTracer()
+    tracer = dt.DynamicDataTracer()
     tracer.file_path = __file__
     helper = BasicTracer(tracer._called_by_user, trace_inside_call=True)
     with helper:
@@ -359,7 +359,7 @@ def basic_case_3():
 
 @pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3])
 def test_basic_programs(_input_fun):
-    tracer = d3.DynamicDataTracer()
+    tracer = dt.DynamicDataTracer()
     src, expected_checks = _input_fun()
     src = textwrap.dedent(src)
     tracer.run(src)

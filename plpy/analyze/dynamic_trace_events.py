@@ -1,4 +1,5 @@
-# Trace events
+# Events for a dynamic trace
+
 class TraceEvent(object):
     pass
 
