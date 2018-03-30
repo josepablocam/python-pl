@@ -154,45 +154,6 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         return to_ast_node(call_str)
 
 
-# TODO: consider alternatives
-# importing triggers a ton calls
-# and we don't really care about these
-# so our solution for now is collect and execute
-# all imports upfront (this includes imports stated inside functions)
-# before tracing and passing on the globals and locals created as part of that
-class RunImports(ast.NodeVisitor):
-    def __init__(self):
-        self.imports = []
-
-    def visit_Import(self, node):
-        self.imports.append(node)
-
-    def visit_ImportFrom(self, node):
-        self.imports.append(node)
-
-    def execute_imports(self):
-        _globals = {}
-        _locals = {}
-        for node in self.imports:
-            stmt = astunparse.unparse(node)
-            log.info('Running import: %s' % stmt)
-            exec(stmt, _globals, _locals)
-        return _globals, _locals
-
-    def run(self, tree):
-        if not isinstance(tree, ast.Module):
-            tree = ast.parse(tree)
-        self.visit(tree)
-        return self.execute_imports()
-
-# some functions need to be avoided
-# in tracing
-# taken from
-# https://github.com/DonJayamanne/pythonVSCode/blob/master/pythonFiles/PythonTools/visualstudio_py_debugger.py
-DONT_TRACE = []
-DONT_TRACE.append('<frozen importlib._bootstrap>')
-DONT_TRACE.append('<frozen importlib._bootstrap_external>')
-
 class DynamicDataTracer(object):
     def __init__(self):
         self.file_path = None
@@ -201,6 +162,7 @@ class DynamicDataTracer(object):
         self.trace_events = []
         self.trace_errors = []
         self.orig_tracer = None
+        self.traced_stack_depth = 0
 
     def _allocate_event_id(self):
         log.info('Allocated new event id')
@@ -210,17 +172,19 @@ class DynamicDataTracer(object):
 
     def _called_by_user(self, frame):
         """ only trace calls to functions directly invoked by the user """
-        log.info('Checking if user called function')
-        return inspect.getfile(get_caller_frame(frame)) == self.file_path
+        called = inspect.getfile(get_caller_frame(frame)) == self.file_path
+        log.info('Checking if user called function: %s' % called)
+        return called
 
     def _defined_by_user(self, frame):
         """ only trace lines inside body of functions that are defined by user in same file """
-        log.info('Checking if frame is for user defined function')
         try:
-            return inspect.getfile(frame) == self.file_path
+            defined =  inspect.getfile(frame) == self.file_path
         except TypeError:
             # will be raised for buildin module/class/function, which by definition are not defined by used
-            return False
+            defined =  False
+        log.info('Checking if frame is for user defined function: %s' % defined)
+        return defined
 
     def _getsource(self, frame):
         # we strip before returning the line as
@@ -339,35 +303,44 @@ class DynamicDataTracer(object):
         return mem_locs
 
     def trace_call(self, frame, event, arg):
-        if inspect.getframeinfo(frame).filename in DONT_TRACE:
-            log.info('Found call to DONT_TRACE functions, ignoring')
+        called_by_user = self._called_by_user(frame)
+        defined_by_user = self._defined_by_user(frame)
+
+        if not called_by_user and not defined_by_user:
+            log.info('Neither called nor defined by user so tracing as external')
             return self.trace_external
 
         log.info('Trace call: %s' % str(inspect.getframeinfo(frame)))
-        log.info('Called by user: %s' % self._called_by_user(frame))
 
-        # imports are treated as a function call
+        # if we can't get source, means we didn't see it from user directly
+        # so just treat as external
         line = self._getsource(frame)
         if line is None:
             log.warn('Empty source for trace call: %s' % str(inspect.getframeinfo(frame)))
-            log.warn('Called by user: %s' % self._called_by_user(frame))
+            log.warn('Tracing as external')
             return self.trace_external
 
         # retrieve the actual function being called
         func_obj = get_function_obj(frame)
 
         # unable to do much here
-        # so we basically just stop tracing until the next call comes around
+        # so basically pretend this is an external function
         if func_obj is None:
             log.warn('Function object was None for source: %s' % self._getsource(frame))
-            return None
+            log.warn('Tracing as external')
+            # basically wait to trigger a re-entry to standard tracing
+            return self.trace_external
 
         if is_stub_call(func_obj):
             log.info('Function object is a stub')
             return self.trace_stub(frame, event, arg)
 
-        if self._called_by_user(frame):
+        if called_by_user:
+            # if we remove this check, we'll get some initial tracing functions
+            # that we don't want
             log.info('Collecting call made by user')
+            # increase the depth of the traced stack
+            self.traced_stack_depth += 1
             # call site
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
@@ -391,11 +364,12 @@ class DynamicDataTracer(object):
                 )
             event_id = self._allocate_event_id()
             trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
+            log.info('Appending trace event: %s' % trace_event)
             self.trace_events.append(trace_event)
 
         # functions that are defined by the user
         # will have line-level tracing
-        if self._defined_by_user(frame):
+        if defined_by_user:
             log.info('Call is defined by user, continuing standard trace')
             return self.trace
         else:
@@ -405,8 +379,9 @@ class DynamicDataTracer(object):
 
     def trace_return(self, frame, event, arg):
         log.info('Trace return')
-        if self._called_by_user(frame):
+        if self._called_by_user(frame) and self.traced_stack_depth > 0:
             log.info('Return is from a user-called function')
+            self.traced_stack_depth -= 1
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
@@ -474,6 +449,7 @@ class DynamicDataTracer(object):
         self.trace_events = []
         self.trace_errors = []
         self.event_counter = 0
+        self.traced_stack_depth = 0
 
     def run(self, file_path):
         log.info('Running tracer')
@@ -495,10 +471,9 @@ class DynamicDataTracer(object):
             f.write(src)
         self.file_path = instrumented_file_path
 
-        # run imports before hand
-        log.info('Running upfront imports to avoid tracing')
-        _globals, _locals = RunImports().run(src)
         # add in additional mappings
+        _globals = {}
+        _locals = {}
         _globals['__name__'] = '__main__'
         _globals['__file__'] = self.file_path
         _globals['__builtins__'] = __builtins__
