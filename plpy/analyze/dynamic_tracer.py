@@ -9,10 +9,6 @@ import os
 import pickle
 import sys
 
-# This import is a hack...we export a third party lib
-# so that a lot of the loading for modules etc is done
-# outside of the tracing...
-#import numpy as np
 
 from .dynamic_trace_events import *
 
@@ -316,8 +312,8 @@ class DynamicDataTracer(object):
         # so just treat as external
         line = self._getsource(frame)
         if line is None:
-            log.warn('Empty source for trace call: %s' % str(inspect.getframeinfo(frame)))
-            log.warn('Tracing as external')
+            log.warning('Empty source for trace call: %s' % str(inspect.getframeinfo(frame)))
+            log.warning('Tracing as external')
             return self.trace_external
 
         # retrieve the actual function being called
@@ -326,8 +322,8 @@ class DynamicDataTracer(object):
         # unable to do much here
         # so basically pretend this is an external function
         if func_obj is None:
-            log.warn('Function object was None for source: %s' % self._getsource(frame))
-            log.warn('Tracing as external')
+            log.warning('Function object was None for source: %s' % self._getsource(frame))
+            log.warning('Tracing as external')
             # basically wait to trigger a re-entry to standard tracing
             return self.trace_external
 

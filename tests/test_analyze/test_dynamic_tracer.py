@@ -314,6 +314,7 @@ def basic_case_2():
 
 def basic_case_3():
         src = """
+            import numpy as np
             class A(object):
                 def __init__(self, x):
                     self.v = x
@@ -325,9 +326,13 @@ def basic_case_3():
             obj = A(10)
             z = obj.f(x, y)
             obj.v = 200
+            np.max([1,2,3])
         """
 
         expected_event_checks = [
+            # import numpy as np
+            make_event_check(check_exec_line, line='import numpy as np', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['np']),
             # x = 10
             make_event_check(check_exec_line, line='x = 10', refs_loaded=[]),
             make_event_check(check_memory_update, updates=['x']),
@@ -337,7 +342,7 @@ def basic_case_3():
             # obj = A(10)
             make_event_check(check_exec_line, line='obj = A(10)', refs_loaded=['A']),
             # note that the constructor call is not yet a 'method' as there is no instance bount to it at the time of function entry
-            make_event_check(check_enter_call, qualname='A', call_args=set(['self', 'x']), is_method=False),
+            make_event_check(check_enter_call, qualname='A', call_args=['self', 'x'], is_method=False),
             make_event_check(check_exec_line, line='self.v = x', refs_loaded=['self', 'x']),
             # self, and self.v
             make_event_check(check_memory_update, updates=['self', 'self.v']),
@@ -347,13 +352,15 @@ def basic_case_3():
             make_event_check(check_exec_line, line='z = obj.f(x, y)', refs_loaded=['obj', 'obj.f', 'x', 'y']),
             # note that is_method is False as staticmethods are indistinguishable from function's in Python 3.*
             # in particular, inspect.ismethod returns False
-            make_event_check(check_enter_call, qualname='A.f', call_args=set(['self', 'x', 'y']), is_method=True),
+            make_event_check(check_enter_call, qualname='A.f', call_args=['self', 'x', 'y'], is_method=True),
             make_event_check(check_exec_line, line='return x + y + self.v', refs_loaded=['x', 'y', 'self', 'self.v']),
             make_event_check(check_exit_call),
             make_event_check(check_memory_update, updates=['z']),
             # obj.v = 200
             make_event_check(check_exec_line, line='obj.v = 200', refs_loaded=['obj']),
             make_event_check(check_memory_update, updates=['obj', 'obj.v']),
+            make_event_check(check_exec_line, line='np.max([1,2,3])', refs_loaded=['np', 'np.max']),
+            make_event_check(check_enter_call, qualname='np.max', call_args=['a'], is_method=False),
         ]
         return src, expected_event_checks
 
