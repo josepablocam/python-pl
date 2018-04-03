@@ -3,7 +3,6 @@ import astunparse
 import sys
 import textwrap
 
-import numpy as np
 import pytest
 
 from plpy.analyze.dynamic_trace_events import *
@@ -111,10 +110,10 @@ def test_get_function_obj(get_func):
     fetched, fun = get_func()
     assert fetched == fun, 'Failed to retrieve appropriate function object'
 
-def test_get_function_unqual_name():
+def test_get_co_name():
     def f():
         return
-    tracer = BasicTracer(dt.get_function_unqual_name)
+    tracer = BasicTracer(dt.get_co_name)
     with tracer:
         f()
     assert tracer.result_acc[0] == 'f'
@@ -229,8 +228,9 @@ def test_function_called_by_user():
     tracer = dt.DynamicDataTracer()
     tracer.file_path = __file__
     helper = BasicTracer(tracer._called_by_user, trace_inside_call=True)
+    import pandas as pd
     with helper:
-        np.max([1, 2])
+        pd.DataFrame([(1,2)])
     assert helper.result_acc[0] and (not helper.result_acc[1]), 'First is call made by user, second is not (its call to np._amax in np source)'
 
 def standardize_source(src):
@@ -252,8 +252,9 @@ def check_enter_call(event, qualname, call_args, is_method):
     assert set(event.details['abstract_call_args'].keys()) == set(call_args)
     assert event.details['is_method'] == is_method
 
-def check_exit_call(event, details=None):
+def check_exit_call(event, co_name):
     assert isinstance(event, ExitCall)
+    assert event.details['co_name'] == co_name
 
 def make_event_check(fun, *args, **kwargs):
     return lambda x: fun(x, *args, **kwargs)
@@ -278,7 +279,7 @@ def basic_case_1():
             make_event_check(check_exec_line, line='z = f(x, y)', refs_loaded=['f', 'x', 'y']),
             make_event_check(check_enter_call, qualname='f', call_args=['x', 'y'], is_method=False),
             make_event_check(check_exec_line, line='return x + y', refs_loaded=['x', 'y']),
-            make_event_check(check_exit_call),
+            make_event_check(check_exit_call, co_name='f'),
             make_event_check(check_memory_update, updates=['z']),
         ]
         return src, expected_event_checks
@@ -307,7 +308,7 @@ def basic_case_2():
             # in particular, inspect.ismethod returns False
             make_event_check(check_enter_call, qualname='A.f', call_args=['x', 'y'], is_method=False),
             make_event_check(check_exec_line, line='return x + y', refs_loaded=['x', 'y']),
-            make_event_check(check_exit_call),
+            make_event_check(check_exit_call, co_name='f'),
             make_event_check(check_memory_update, updates=['z']),
         ]
         return src, expected_event_checks
@@ -327,6 +328,7 @@ def basic_case_3():
             z = obj.f(x, y)
             obj.v = 200
             np.max([1,2,3])
+            x = 2
         """
 
         expected_event_checks = [
@@ -346,7 +348,7 @@ def basic_case_3():
             make_event_check(check_exec_line, line='self.v = x', refs_loaded=['self', 'x']),
             # self, and self.v
             make_event_check(check_memory_update, updates=['self', 'self.v']),
-            make_event_check(check_exit_call),
+            make_event_check(check_exit_call, co_name='__init__'),
             make_event_check(check_memory_update, updates=['obj']),
             # z = obj.f(x, y)
             make_event_check(check_exec_line, line='z = obj.f(x, y)', refs_loaded=['obj', 'obj.f', 'x', 'y']),
@@ -354,13 +356,16 @@ def basic_case_3():
             # in particular, inspect.ismethod returns False
             make_event_check(check_enter_call, qualname='A.f', call_args=['self', 'x', 'y'], is_method=True),
             make_event_check(check_exec_line, line='return x + y + self.v', refs_loaded=['x', 'y', 'self', 'self.v']),
-            make_event_check(check_exit_call),
+            make_event_check(check_exit_call, co_name='f'),
             make_event_check(check_memory_update, updates=['z']),
             # obj.v = 200
             make_event_check(check_exec_line, line='obj.v = 200', refs_loaded=['obj']),
             make_event_check(check_memory_update, updates=['obj', 'obj.v']),
             make_event_check(check_exec_line, line='np.max([1,2,3])', refs_loaded=['np', 'np.max']),
-            make_event_check(check_enter_call, qualname='np.max', call_args=['a'], is_method=False),
+            make_event_check(check_enter_call, qualname='amax', call_args=['a', 'axis', 'out', 'keepdims'], is_method=False),
+            make_event_check(check_exit_call, co_name='amax'),
+            make_event_check(check_exec_line, line='x = 2', refs_loaded= []),
+            make_event_check(check_memory_update, updates=['x']),
         ]
         return src, expected_event_checks
 

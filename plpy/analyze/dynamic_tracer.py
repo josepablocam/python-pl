@@ -18,6 +18,9 @@ logging.basicConfig(
     format="%(asctime)s:%(levelname)s:%(message)s"
     )
 log = logging.getLogger(__name__)
+# TODO: make the logging a command line flag...it slows things down a ton, as expected
+log.setLevel(10000)
+
 
 # helper functions
 def to_ast_node(line):
@@ -29,8 +32,14 @@ def get_lineno(frame):
 def get_caller_frame(frame):
     return frame.f_back
 
+def get_filename(frame):
+    return frame.f_code.co_filename
+
+def get_co_name(frame):
+    return frame.f_code.co_name
+
 # this is a horrendous hack... but not sure that there is a better way
-def get_function_obj(frame):
+def get_function_obj(frame, src_lines=None):
     # can't get function object if we don't actually
     # have the frame
     if frame is None or frame.f_back is None:
@@ -41,10 +50,14 @@ def get_function_obj(frame):
     # https://stackoverflow.com/questions/16589547/get-fully-qualified-method-name-from-inspect-stack
     try:
         parent = get_caller_frame(frame)
-        parent_info = inspect.getframeinfo(parent)
-        if parent_info.code_context:
+        if parent:
             log.debug('Retrieving function object through caller frame')
-            src_line = parent_info.code_context[0].strip()
+            if src_lines:
+                src_line = src_lines[get_lineno(parent) - 1].strip()
+            else:
+                # note that inspect.getframeinfo is super expensive
+                # so this is for completeness only...
+                src_line = inspect.getframeinfo(parent).code_context[0].strip()
             log.debug('Call (based on parent frame): %s' % src_line)
             ast_node = to_ast_node(src_line)
             func_str = astunparse.unparse(ast_node.value.func)
@@ -59,12 +72,13 @@ def get_function_obj(frame):
     except NameError:
         log.exception('Failed to look up name for function object')
         return None
-    except SyntaxError:
+    except (SyntaxError, AttributeError, IndexError):
+        # not syntactically a call
+        # this is possible if call event was triggered
+        # for something like entering a class definition (when first defined)
+        # or if attribute access has been defined to trigger a call (e.g. in pandas dataframes)
         log.error('Failed to parse call', exc_info=True)
         return None
-
-def get_function_unqual_name(frame):
-    return inspect.getframeinfo(frame).function
 
 def get_function_qual_name(obj):
     # relies on the function object
@@ -159,6 +173,7 @@ class DynamicDataTracer(object):
         self.trace_errors = []
         self.orig_tracer = None
         self.traced_stack_depth = 0
+        self.watch_frame = None
 
     def _allocate_event_id(self):
         log.info('Allocated new event id')
@@ -168,25 +183,31 @@ class DynamicDataTracer(object):
 
     def _called_by_user(self, frame):
         """ only trace calls to functions directly invoked by the user """
-        called = inspect.getfile(get_caller_frame(frame)) == self.file_path
+        # called = inspect.getfile(get_caller_frame(frame)) == self.file_path
+        called = get_filename(get_caller_frame(frame)) == self.file_path
         log.info('Checking if user called function: %s' % called)
         return called
 
     def _defined_by_user(self, frame):
         """ only trace lines inside body of functions that are defined by user in same file """
-        try:
-            defined =  inspect.getfile(frame) == self.file_path
-        except TypeError:
-            # will be raised for buildin module/class/function, which by definition are not defined by used
-            defined =  False
+        # try:
+        #     defined =  inspect.getfile(frame) == self.file_path
+        # except TypeError:
+        #     # will be raised for buildin module/class/function, which by definition are not defined by used
+        #     defined =  False
+        defined = get_filename(frame) == self.file_path
         log.info('Checking if frame is for user defined function: %s' % defined)
+        return defined
+
+    def _defined_by_tracing(self, frame):
+        defined = get_filename(frame) == __file__
+        log.info('Checking if frame is for tracing defined function: %s' % defined)
         return defined
 
     def _getsource(self, frame):
         # we strip before returning the line as
         # we often use this line to parse a node
         # and any kind of indentation will lead to SyntaxError raised in ast.parse
-        log.info('Retrieving source for frame')
         if self._defined_by_user(frame):
             log.info('Function is defined by user, fetching source')
             lineno = inspect.getlineno(frame)
@@ -199,35 +220,35 @@ class DynamicDataTracer(object):
             return None
 
     def trace(self, frame, event, arg):
+        if self.watch_frame is not None:
+            # back to the frame we wanted to start tracing again
+            if self.watch_frame == frame:
+                self.watch_frame = None
+            else:
+                # return events are traced event if the watched frame doesn't match as
+                # they arise either from functions we are tracing at line level
+                # or the final return event for an external function that we are not
+                # tracing at the line level
+                if event == 'return':
+                    return self.trace_return(frame, event, arg)
+                else:
+                    log.info('ignoring frame for event: %s' % event)
+                    log.info('co_name: %s' % frame.f_code.co_name)
+                    self._called_by_user(frame)
+                    self._defined_by_user(frame)
+                    return None
+
+        if event == 'call':
+            if not self._called_by_user(frame) and not self._defined_by_user(frame):
+                self.watch_frame = get_caller_frame(frame)
+                return None
+            return self.trace_call(frame, event, arg)
+
         if event == 'line':
             return self.trace_line(frame, event, arg)
 
-        if event == 'call':
-            return self.trace_call(frame, event, arg)
-
         if event == 'return':
             return self.trace_return(frame, event, arg)
-
-        return None
-
-    def trace_external(self, frame, event, arg):
-        """ tracing function for when we enter an external function"""
-        # This is necessary to address calls to external libraries
-        # where the user calls the function directly, so our standard `trace`
-        # function creates an enter-call event, but since no other tracing
-        # should take place, we never create the corresponding exit-call event
-        # by returning this function that just traces returns, we can make
-        # sure that exit-call event is created and added to our trace
-        if (event == 'call' or event == 'return') and self._called_by_user(frame):
-            log.info('Found user-called frame in trace_external')
-            return self.trace(frame, event, arg)
-        #
-        # if event == 'call' and self._called_by_user(frame):
-        #     return self.trace(frame, event, arg)
-        #
-        # if event == 'return':
-        #     log.info('Trace return of external function')
-        #     return self.trace(frame, event, arg)
 
     def trace_line(self, frame, event, arg):
         log.info('Trace line')
@@ -243,14 +264,12 @@ class DynamicDataTracer(object):
             self.trace_events.append(trace_event)
         except SyntaxError:
             log.exception('Syntax error while tracing line: %s' % line)
-            # keeping actual frame does little to help debugging since it
-            # gets updated during execution
-            frameinfo = inspect.getframeinfo(frame)
-            self.trace_errors.append((frameinfo, event, arg, line))
+            self.trace_errors.append((frame.f_code.co_name, event, arg, line))
         return self.trace
 
     def get_load_references_from_line(self, line):
         log.info('Get references from line')
+        assert line is not None
         node = to_ast_node(line)
 
         # assignments can trigger loads as well
@@ -299,103 +318,99 @@ class DynamicDataTracer(object):
         return mem_locs
 
     def trace_call(self, frame, event, arg):
-        called_by_user = self._called_by_user(frame)
-        defined_by_user = self._defined_by_user(frame)
+        if (not self._defined_by_user(frame) and not self._called_by_user(frame)) or\
+        self.watch_frame:
+            log.error('Trace call should only run on code written or called by user')
+            raise Exception('Tracing non-user code')
 
-        if not called_by_user and not defined_by_user:
-            log.info('Neither called nor defined by user so tracing as external')
-            return self.trace_external
+        log.info('Trace co_name: %s' % get_co_name(frame))
 
-        log.info('Trace call: %s' % str(inspect.getframeinfo(frame)))
+        # retrieve the object for the function being called
+        func_obj = get_function_obj(frame, src_lines=self.src_lines)
 
-        # if we can't get source, means we didn't see it from user directly
-        # so just treat as external
-        line = self._getsource(frame)
-        if line is None:
-            log.warning('Empty source for trace call: %s' % str(inspect.getframeinfo(frame)))
-            log.warning('Tracing as external')
-            return self.trace_external
-
-        # retrieve the actual function being called
-        func_obj = get_function_obj(frame)
-
-        # unable to do much here
-        # so basically pretend this is an external function
+        # either not a function call (e.g. entered code block)
+        # or couldn't retrieve function source to get object
         if func_obj is None:
-            log.warning('Function object was None for source: %s' % self._getsource(frame))
-            log.warning('Tracing as external')
-            # basically wait to trigger a re-entry to standard tracing
-            return self.trace_external
+            log.info('Function object was None for source: %s' % self._getsource(frame))
+            if self._defined_by_user(frame):
+                log.info('Tracing as defined by user')
+                return self.trace
+            else:
+                log.info('Ignoring and treating as external since not defined by user')
+                log.info('Function from frame: %s' % frame.f_code.co_name)
+                self.watch_frame = get_caller_frame(frame)
+                return None
 
         if is_stub_call(func_obj):
             log.info('Function object is a stub')
             return self.trace_stub(frame, event, arg)
 
-        if called_by_user:
-            # if we remove this check, we'll get some initial tracing functions
-            # that we don't want
-            log.info('Collecting call made by user')
-            # increase the depth of the traced stack
-            self.traced_stack_depth += 1
-            # call site
-            caller_frame = get_caller_frame(frame)
-            call_site_lineno = inspect.getlineno(caller_frame)
-            call_site_line = self._getsource(caller_frame)
+        log.info('Collecting call made by user')
+        # # increase the depth of the traced stack
+        self.traced_stack_depth += 1
+        # call site
+        caller_frame = get_caller_frame(frame)
+        call_site_lineno = inspect.getlineno(caller_frame)
+        call_site_line = self._getsource(caller_frame)
 
-            # call details
-            is_method = inspect.ismethod(func_obj)
-            qualname = get_function_qual_name(func_obj)
-            call_args = inspect.getargvalues(frame)
-            abstract_call_args = get_abstract_vals(call_args)
-            # we keep track of the memory location of the function object
-            # because it can allow us to establish a link between a line that calls
-            # an function and the actual function call entry
-            mem_loc_func = id(func_obj)
+        # call details
+        is_method = inspect.ismethod(func_obj)
+        co_name = frame.f_code.co_name
+        qualname = get_function_qual_name(func_obj)
+        call_args = inspect.getargvalues(frame)
+        abstract_call_args = get_abstract_vals(call_args)
+        # we keep track of the memory location of the function object
+        # because it can allow us to establish a link between a line that calls
+        # an function and the actual function call entry
+        mem_loc_func = id(func_obj)
 
-            details = dict(
-                is_method          = is_method,
-                qualname           = qualname,
-                abstract_call_args = abstract_call_args,
-                mem_loc_func       = mem_loc_func
-                )
-            event_id = self._allocate_event_id()
-            trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
-            log.info('Appending trace event: %s' % trace_event)
-            self.trace_events.append(trace_event)
+        details = dict(
+            is_method          = is_method,
+            co_name            = co_name,
+            qualname           = qualname,
+            abstract_call_args = abstract_call_args,
+            mem_loc_func       = mem_loc_func
+            )
+        event_id = self._allocate_event_id()
+        trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
+        self.trace_events.append(trace_event)
 
-        # functions that are defined by the user
-        # will have line-level tracing
-        if defined_by_user:
-            log.info('Call is defined by user, continuing standard trace')
-            return self.trace
-        else:
+        # functions that are not defined by the user
+        # will have not line-level tracing
+        if not self._defined_by_user(frame):
             # external functions only get the paired exit-call event
-            log.info('Function is external, tracing with trace_external')
-            return self.trace_external
+            log.info('Function is external, storing frame to watch')
+            log.info("Function that is external: %s" % frame.f_code.co_name)
+            self.watch_frame = get_caller_frame(frame)
+
+        return self.trace
 
     def trace_return(self, frame, event, arg):
         log.info('Trace return')
-        if self._called_by_user(frame) and self.traced_stack_depth > 0:
-            log.info('Return is from a user-called function')
+        # we need to make sure we are expecting a return event
+        # since things like exiting a class def produces a return event
+        if self.traced_stack_depth > 0:
+            log.info('Return from a user-called function: %s' % frame.f_code.co_name)
             self.traced_stack_depth -= 1
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
-            details = None
+            details = {'co_name': get_co_name(frame)}
             event_id = self._allocate_event_id()
             trace_event = ExitCall(event_id, call_site_lineno, call_site_line, details)
             self.trace_events.append(trace_event)
 
     def trace_stub(self, frame, event, arg):
         log.info('Tracing stub')
-        stub_obj = get_function_obj(frame)
+        stub_obj = get_function_obj(frame, src_lines=self.src_lines)
         stub_event = None
         if stub_obj == memory_update_stub:
             stub_event = self.consume_memory_update_stub(frame, event, arg)
         else:
             raise Exception("Unknown stub qualified name: %s" % get_function_qual_name(stub_obj))
         # remove stub from trace of events
-        self.trace_events.pop()
+        if self.trace_events:
+            self.trace_events.pop()
         if stub_event:
             self.trace_events.append(stub_event)
 
@@ -446,6 +461,7 @@ class DynamicDataTracer(object):
         self.trace_errors = []
         self.event_counter = 0
         self.traced_stack_depth = 0
+        self.watch_frame = None
 
     def run(self, file_path):
         log.info('Running tracer')
@@ -486,6 +502,8 @@ def main(args):
     src = open(args.input_path).read()
     tracer = DynamicDataTracer()
     tracer.run(src)
+    tracer.watch_frame = None
+    print(list(map(str, tracer.trace_events)))
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
 
@@ -497,7 +515,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         main(args)
-    except:
+    except Exception as err:
         import pdb
         pdb.post_mortem()
 
