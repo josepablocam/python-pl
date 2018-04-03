@@ -106,7 +106,7 @@ python -m plpy.analyze.build_graph src_trace.pkl src_graph.pkl --draw --block --
 
 You should see a graph like the one below:
 
-![Graph](images/example_graph.pdf)
+![Graph](images/example_graph.png)
 
 
 # Huge Caveats
