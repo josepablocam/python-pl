@@ -18,8 +18,8 @@ logging.basicConfig(
     format="%(asctime)s:%(levelname)s:%(message)s"
     )
 log = logging.getLogger(__name__)
-# TODO: make the logging a command line flag...it slows things down a ton, as expected
-log.setLevel(10000)
+# only log critical messages unless told otherwise
+log.setLevel(logging.CRITICAL)
 
 
 # helper functions
@@ -503,7 +503,6 @@ def main(args):
     tracer = DynamicDataTracer()
     tracer.run(src)
     tracer.watch_frame = None
-    print(list(map(str, tracer.trace_events)))
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
 
@@ -512,7 +511,10 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='Execute lifted script with dynamic tracing')
     parser.add_argument('input_path', type=str, help='Path to lifted source')
     parser.add_argument('output_path', type=str, help='Path for pickled tracer with results')
+    parser.add_argument('-l', '--log', action='store_true', help='Turn on logging (slows down tracing significantly)')
     args = parser.parse_args()
+    if args.log:
+        log.setLevel(logging.DEBUG)
     try:
         main(args)
     except Exception as err:
