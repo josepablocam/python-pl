@@ -103,7 +103,6 @@ STUBS = [memory_update_stub]
 def is_stub_call(func_obj):
     return func_obj in STUBS
 
-
 class ExtractReferences(ast.NodeVisitor):
     """
     Extract nested names and attributes references.
@@ -337,12 +336,12 @@ class DynamicDataTracer(object):
                 return self.trace
             else:
                 log.info('Ignoring and treating as external since not defined by user')
-                log.info('Function from frame: %s' % frame.f_code.co_name)
+                log.info('Function from frame: %s' % get_co_name(frame))
                 self.watch_frame = get_caller_frame(frame)
                 return None
 
         if is_stub_call(func_obj):
-            log.info('Function object is a stub')
+            log.info('Function object is a stub: %s' % get_co_name(frame))
             return self.trace_stub(frame, event, arg)
 
         log.info('Collecting call made by user')
@@ -355,7 +354,7 @@ class DynamicDataTracer(object):
 
         # call details
         is_method = inspect.ismethod(func_obj)
-        co_name = frame.f_code.co_name
+        co_name = get_co_name(frame)
         qualname = get_function_qual_name(func_obj)
         call_args = inspect.getargvalues(frame)
         abstract_call_args = get_abstract_vals(call_args)
@@ -380,9 +379,8 @@ class DynamicDataTracer(object):
         if not self._defined_by_user(frame):
             # external functions only get the paired exit-call event
             log.info('Function is external, storing frame to watch')
-            log.info("Function that is external: %s" % frame.f_code.co_name)
+            log.info("Function that is external: %s" % get_co_name(frame))
             self.watch_frame = get_caller_frame(frame)
-
         return self.trace
 
     def trace_return(self, frame, event, arg):
@@ -403,15 +401,24 @@ class DynamicDataTracer(object):
     def trace_stub(self, frame, event, arg):
         log.info('Tracing stub')
         stub_obj = get_function_obj(frame, src_lines=self.src_lines)
+        if stub_obj.__name__ != get_co_name(frame):
+            # stub objects are guaranteed to have the co_name match the object name
+            # if this is not the case, then this is not actually a stub
+            # this can happen for example if there is a stub
+            # as the last line in a with statement.
+            # when __exit__ is called, it raises a call. We try to retrieve
+            # function object by looking at the source line that is the caller
+            # this could be a stub line, and then that function gets retrieved as an object
+            # despite the mismatch
+            return None
         stub_event = None
         if stub_obj == memory_update_stub:
             stub_event = self.consume_memory_update_stub(frame, event, arg)
         else:
             raise Exception("Unknown stub qualified name: %s" % get_function_qual_name(stub_obj))
         # remove stub from trace of events
-        if self.trace_events:
-            self.trace_events.pop()
         if stub_event:
+            self.trace_events.pop()
             self.trace_events.append(stub_event)
 
     def consume_memory_update_stub(self, frame, event, arg):
@@ -423,7 +430,6 @@ class DynamicDataTracer(object):
         arginfo = inspect.getargvalues(frame)
         if len(arginfo.args) != 2:
             log.error('memory_update_stub should only have 2 argumnets: list of names and list of values')
-            arginfo.locals = {}
             log.error('ArgumentInfo: %s' % arginfo.args)
             raise TypeError('memory_update_stub should have 2 arguments')
         # memory locations that need to be updated
@@ -482,7 +488,6 @@ class DynamicDataTracer(object):
         with open(instrumented_file_path, 'w') as f:
             f.write(src)
         self.file_path = instrumented_file_path
-
         # add in additional mappings
         _globals = {}
         _locals = {}

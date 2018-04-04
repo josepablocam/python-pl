@@ -242,12 +242,15 @@ def check_memory_update(event, updates):
 
 def check_exec_line(event, line, refs_loaded):
     assert isinstance(event, ExecLine)
-    assert standardize_source(event.line) == standardize_source(line)
+    try:
+        assert standardize_source(event.line) == standardize_source(line)
+    except SyntaxError:
+        # somethings such as with... can't parse as asingle line
+        assert event.line.strip() == line.strip()
     assert set(event.uses_mem_locs.keys()) == set(refs_loaded)
 
 def check_enter_call(event, qualname, call_args, is_method):
     assert isinstance(event, EnterCall)
-    print(event.details)
     assert event.details['qualname'] == qualname
     assert set(event.details['abstract_call_args'].keys()) == set(call_args)
     assert event.details['is_method'] == is_method
