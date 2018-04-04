@@ -372,7 +372,45 @@ def basic_case_3():
         ]
         return src, expected_event_checks
 
-@pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3])
+def basic_case_4():
+        src = """
+            class A(object):
+                def __init__(self, val):
+                    self.val = val
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, type, value, traceback):
+                    pass
+
+            orig = 10
+            with A(orig) as v:
+                x = v.val
+
+            print(x)
+        """
+
+        expected_event_checks = [
+            make_event_check(check_exec_line, line='orig = 10', refs_loaded = []),
+            make_event_check(check_memory_update, updates=['orig']),
+            make_event_check(check_exec_line, line='with A(orig) as v:', refs_loaded=['A', 'orig']),
+            # inside __init__
+            make_event_check(check_exec_line, line='self.val = val', refs_loaded=['self', 'val']),
+            make_event_check(check_memory_update, updates=['self.val', 'self']),
+            # inside __return__ as defined by user
+            make_event_check(check_exec_line, line='return self', refs_loaded=['self']),
+            make_event_check(check_memory_update, updates=['v']),
+            make_event_check(check_exec_line, line='x = v.val', refs_loaded=['v', 'v.val']),
+            make_event_check(check_memory_update, updates=['x']),
+            make_event_check(check_exec_line, line='print(x)', refs_loaded=['print', 'x']),
+            # print actually calls write, which takes the object and self
+            make_event_check(check_enter_call, qualname='print', call_args=['self', 'obj'], is_method=False),
+            make_event_check(check_exit_call, co_name='write'),
+        ]
+        return src, expected_event_checks
+
+@pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3, basic_case_4])
 def test_basic_programs(_input_fun):
     tracer = dt.DynamicDataTracer()
     src, expected_checks = _input_fun()

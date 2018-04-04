@@ -134,27 +134,41 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         self.stub_name = stub_name
 
     def visit_Assign(self, node):
-        return node, self._create_stub_node(node.targets)
+        return node, self._create_stub_node(node.targets, treat_as_names=False)
 
     def visit_AugAssign(self, node):
-        return node, self._create_stub_node([node.target])
+        return node, self._create_stub_node([node.target], treat_as_names=False)
 
     def visit_Import(self, node):
         names = []
         for _alias in node.names:
             name = _alias.asname if _alias.asname else _alias.name
             names.append(name)
-        return node, self._create_stub_node(names, get_nested=False)
+        return node, self._create_stub_node(names, treat_as_names=True)
 
     def visit_ImportFrom(self, node):
         _, stubs = self.visit_Import(ast.Import(node.names))
         return node, stubs
 
-    def _create_stub_node(self, targets, get_nested=True):
+    def visit_With(self, node):
+        # with binds names so we also need a memory update
+        alias_nodes = []
+        for withitem in node.items:
+            alias = withitem.optional_vars
+            if alias:
+                alias_nodes.append(alias.id)
+        # add in the memory update inside the with
+        stub_node = self._create_stub_node(alias_nodes, treat_as_names=True)
+        node.body = [stub_node] + node.body
+        # add in stubs to body as necessary
+        return self.generic_visit(node)
+
+    def _create_stub_node(self, targets, treat_as_names=False):
         references = []
-        if get_nested:
+        # if we don't have all the names already, extract them
+        if not treat_as_names:
             for tgt in targets:
-                references.extend(get_nested_references(tgt))
+                references.extend(get_nested_references(tgt, exclude_first=False))
         else:
             references.extend(targets)
         names_str = ','.join(['"%s"' % ref for ref in references])
@@ -249,6 +263,22 @@ class DynamicDataTracer(object):
         if event == 'return':
             return self.trace_return(frame, event, arg)
 
+    def convert_with_items_to_lines(self, line):
+        log.info('Converting with-statement items to separate lines for tracer')
+        # a dummy to actually parse this
+        with_dummy = line + '\n\tpass'
+        with_node = to_ast_node(with_dummy)
+        lines = []
+        for withitem in with_node.items:
+            rhs = astunparse.unparse(withitem.context_expr).strip()
+            if withitem.optional_vars:
+                lhs = astunparse.unparse(withitem.optional_vars).strip()
+                line = f'{lhs} = {rhs}'
+            else:
+                line = rhs
+            lines.append(line)
+        return lines
+
     def trace_line(self, frame, event, arg):
         log.info('Trace line')
         # Note that any C-based function (e.g. max/len etc)
@@ -257,8 +287,18 @@ class DynamicDataTracer(object):
         log.info('Line: %s' % line)
         event_id = self._allocate_event_id()
         try:
-            load_references = self.get_load_references_from_line(line)
+            # some statements we break up and treat as multiple lines
+            lines = [line]
+            if line.startswith('with'):
+                # this is actually parseable
+                lines = self.convert_with_items_to_lines(line)
+            # using these lines, get any load references
+            load_references = []
+            for l in lines:
+                load_references.extend(self.get_load_references_from_line(l))
+            # using the load references, get the memory locations
             load_mem_locs = self.get_mem_locs(load_references, frame)
+            # associate all these with the initial line/lineno and store the event
             trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
             self.trace_events.append(trace_event)
         except SyntaxError:
