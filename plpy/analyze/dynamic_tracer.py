@@ -13,7 +13,7 @@ import sys
 from .dynamic_trace_events import *
 
 logging.basicConfig(
-    filename="test.log",
+    filename="dynamic_tracer.log",
     level=logging.DEBUG,
     format="%(asctime)s:%(levelname)s:%(message)s"
     )
@@ -551,14 +551,21 @@ def main(args):
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
 
+def set_log_handler(logger, file_path):
+    # https://stackoverflow.com/questions/13839554/how-to-change-filehandle-with-python-logging-on-the-fly-with-different-classes-a
+    new_handler = logging.FileHandler(file_path, 'a')
+    for hdlr in logger.handlers[:]:
+        logger.removeHandler(hdlr)
+    logger.addHandler(new_handler)
 
 if __name__ == '__main__':
     parser = ArgumentParser(description='Execute lifted script with dynamic tracing')
     parser.add_argument('input_path', type=str, help='Path to lifted source')
     parser.add_argument('output_path', type=str, help='Path for pickled tracer with results')
-    parser.add_argument('-l', '--log', action='store_true', help='Turn on logging (slows down tracing significantly)')
+    parser.add_argument('-l', '--log', type=str, help='Path for logging file (slows down tracing significantly)')
     args = parser.parse_args()
     if args.log:
+        set_log_handler(log, args.log)
         log.setLevel(logging.DEBUG)
     try:
         main(args)
