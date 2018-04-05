@@ -84,7 +84,7 @@ def get_function_qual_name(obj):
         log.debug('Attempting to access __qualname__ for function object %s' % obj)
         return obj.__qualname__
     except AttributeError:
-        log.warn('Function does not have __qualname__ attribute: %s' % obj)
+        log.warning('Function does not have __qualname__ attribute: %s' % obj)
         return None
 
 def get_abstract_vals(arginfo):
@@ -185,7 +185,6 @@ class DynamicDataTracer(object):
         self.trace_errors = []
         self.orig_tracer = None
         self.traced_stack_depth = 0
-        self.watch_frame = None
 
     def _allocate_event_id(self):
         log.info('Allocated new event id')
@@ -227,28 +226,15 @@ class DynamicDataTracer(object):
 
     def trace(self, frame, event, arg):
         try:
-            if self.watch_frame is not None:
-                # back to the frame we wanted to start tracing again
-                if self.watch_frame == frame:
-                    self.watch_frame = None
-                else:
-                    # return events are traced event if the watched frame doesn't match as
-                    # they arise either from functions we are tracing at line level
-                    # or the final return event for an external function that we are not
-                    # tracing at the line level
-                    if event == 'return':
-                        return self.trace_return(frame, event, arg)
-                    else:
-                        log.info('ignoring frame for event: %s' % event)
-                        log.info('co_name: %s' % frame.f_code.co_name)
-                        self._called_by_user(frame)
-                        self._defined_by_user(frame)
-                        return None
+            # we only trace user code
+            if not self._called_by_user(frame) and not self._defined_by_user(frame):
+                return None
+
+            # we don't trace bodies of library functions, event if called by user
+            if not self._defined_by_user(frame) and event == 'line':
+                return None
 
             if event == 'call':
-                if not self._called_by_user(frame) and not self._defined_by_user(frame):
-                    self.watch_frame = get_caller_frame(frame)
-                    return None
                 return self.trace_call(frame, event, arg)
 
             if event == 'line':
@@ -357,11 +343,6 @@ class DynamicDataTracer(object):
         return mem_locs
 
     def trace_call(self, frame, event, arg):
-        if (not self._defined_by_user(frame) and not self._called_by_user(frame)) or\
-        self.watch_frame:
-            log.error('Trace call should only run on code written or called by user')
-            raise Exception('Tracing non-user code')
-
         log.info('Tracing call')
         log.info('Trace co_name: %s' % get_co_name(frame))
 
@@ -378,7 +359,6 @@ class DynamicDataTracer(object):
             else:
                 log.info('Ignoring and treating as external since not defined by user')
                 log.info('Function from frame: %s' % get_co_name(frame))
-                self.watch_frame = get_caller_frame(frame)
                 return None
 
         if is_stub_call(func_obj):
@@ -414,13 +394,6 @@ class DynamicDataTracer(object):
         log.info('Appending trace event: %s' % trace_event)
         self.trace_events.append(trace_event)
 
-        # functions that are not defined by the user
-        # will have not line-level tracing
-        if not self._defined_by_user(frame):
-            # external functions only get the paired exit-call event
-            log.info('Function is external, storing frame to watch')
-            log.info("Function that is external: %s" % get_co_name(frame))
-            self.watch_frame = get_caller_frame(frame)
         return self.trace
 
     def trace_return(self, frame, event, arg):
@@ -514,7 +487,6 @@ class DynamicDataTracer(object):
         self.trace_errors = []
         self.event_counter = 0
         self.traced_stack_depth = 0
-        self.watch_frame = None
 
     def run(self, file_path):
         log.info('Running tracer')
@@ -559,7 +531,6 @@ def main(args):
     src = open(args.input_path).read()
     tracer = DynamicDataTracer()
     tracer.run(src)
-    tracer.watch_frame = None
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
 

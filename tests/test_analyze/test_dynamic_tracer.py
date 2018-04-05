@@ -252,7 +252,8 @@ def check_exec_line(event, line, refs_loaded):
 def check_enter_call(event, qualname, call_args, is_method):
     assert isinstance(event, EnterCall)
     assert event.details['qualname'] == qualname
-    assert set(event.details['abstract_call_args'].keys()) == set(call_args)
+    if call_args is not None:
+        assert set(event.details['abstract_call_args'].keys()) == set(call_args)
     assert event.details['is_method'] == is_method
 
 def check_exit_call(event, co_name):
@@ -391,8 +392,12 @@ def basic_case_4():
             orig = 10
             with A(orig) as v:
                 x = v.val
+            max([x, 2])
+            w = 10
 
-            print(x)
+            import pandas as pd
+            df = pd.DataFrame([(1, 2), (3, 4)], columns=['c1', 'c2'])
+            df.max()
         """
 
         expected_event_checks = [
@@ -407,10 +412,20 @@ def basic_case_4():
             make_event_check(check_memory_update, updates=['v']),
             make_event_check(check_exec_line, line='x = v.val', refs_loaded=['v', 'v.val']),
             make_event_check(check_memory_update, updates=['x']),
-            make_event_check(check_exec_line, line='print(x)', refs_loaded=['print', 'x']),
-            # print actually calls write, which takes the object and self
-            make_event_check(check_enter_call, qualname='print', call_args=['self', 'obj'], is_method=False),
-            make_event_check(check_exit_call, co_name='write'),
+            make_event_check(check_exec_line, line='max([x, 2])', refs_loaded=['x', 'max']),
+            make_event_check(check_exec_line, line='w = 10', refs_loaded = []),
+            make_event_check(check_memory_update, updates=['w']),
+            make_event_check(check_exec_line, line='import pandas as pd', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['pd']),
+            make_event_check(check_exec_line, line="df = pd.DataFrame([(1, 2), (3, 4)], columns=['c1', 'c2'])", refs_loaded=['pd', 'pd.DataFrame']),
+            # ignore call_args too many....
+            make_event_check(check_enter_call, qualname='DataFrame', call_args=None, is_method=False),
+            make_event_check(check_exit_call, co_name='__init__'),
+            make_event_check(check_memory_update, updates=['df']),
+            make_event_check(check_exec_line, line='df.max()', refs_loaded=['df', 'df.max']),
+            make_event_check(check_enter_call, qualname='DataFrame.max', call_args=None, is_method=True),
+            # this matches the co_name for DataFrame.max
+            make_event_check(check_exit_call, co_name='stat_func'),
         ]
         return src, expected_event_checks
 
