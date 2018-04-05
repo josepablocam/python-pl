@@ -238,35 +238,41 @@ class DynamicDataTracer(object):
             return None
 
     def trace(self, frame, event, arg):
-        if self.watch_frame is not None:
-            # back to the frame we wanted to start tracing again
-            if self.watch_frame == frame:
-                self.watch_frame = None
-            else:
-                # return events are traced event if the watched frame doesn't match as
-                # they arise either from functions we are tracing at line level
-                # or the final return event for an external function that we are not
-                # tracing at the line level
-                if event == 'return':
-                    return self.trace_return(frame, event, arg)
+        try:
+            if self.watch_frame is not None:
+                # back to the frame we wanted to start tracing again
+                if self.watch_frame == frame:
+                    self.watch_frame = None
                 else:
-                    log.info('ignoring frame for event: %s' % event)
-                    log.info('co_name: %s' % frame.f_code.co_name)
-                    self._called_by_user(frame)
-                    self._defined_by_user(frame)
+                    # return events are traced event if the watched frame doesn't match as
+                    # they arise either from functions we are tracing at line level
+                    # or the final return event for an external function that we are not
+                    # tracing at the line level
+                    if event == 'return':
+                        return self.trace_return(frame, event, arg)
+                    else:
+                        log.info('ignoring frame for event: %s' % event)
+                        log.info('co_name: %s' % frame.f_code.co_name)
+                        self._called_by_user(frame)
+                        self._defined_by_user(frame)
+                        return None
+
+            if event == 'call':
+                if not self._called_by_user(frame) and not self._defined_by_user(frame):
+                    self.watch_frame = get_caller_frame(frame)
                     return None
+                return self.trace_call(frame, event, arg)
 
-        if event == 'call':
-            if not self._called_by_user(frame) and not self._defined_by_user(frame):
-                self.watch_frame = get_caller_frame(frame)
-                return None
-            return self.trace_call(frame, event, arg)
+            if event == 'line':
+                return self.trace_line(frame, event, arg)
 
-        if event == 'line':
-            return self.trace_line(frame, event, arg)
+            if event == 'return':
+                return self.trace_return(frame, event, arg)
 
-        if event == 'return':
-            return self.trace_return(frame, event, arg)
+        except Exception as err:
+            log.exception("Exception raised by tracer code")
+            self.shutdown()
+
 
     def convert_with_items_to_lines(self, line):
         log.info('Converting with-statement items to separate lines for tracer')
@@ -550,10 +556,15 @@ class DynamicDataTracer(object):
         # stubs
         _globals[memory_update_stub.__qualname__] =  memory_update_stub
         compiled = compile(src, filename=self.file_path, mode='exec')
-        self.setup()
-        # pass in both to make sure imported modules are there during tracing
-        exec(compiled, _globals, _locals)
-        self.shutdown()
+        try:
+            self.setup()
+            # pass in both to make sure imported modules are there during tracing
+            exec(compiled, _globals, _locals)
+        except Exception as err:
+            self.shutdown()
+            self.add_exception_event()
+        finally:
+            self.shutdown()
 
 
 def main(args):
