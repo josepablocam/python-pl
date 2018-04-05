@@ -195,18 +195,13 @@ class DynamicDataTracer(object):
     def _called_by_user(self, frame):
         """ only trace calls to functions directly invoked by the user """
         called = get_filename(get_caller_frame(frame)) == self.file_path
-        log.info('Checking if user called function: %s' % called)
+        # log.info('Checking if user called function: %s' % called)
         return called
 
     def _defined_by_user(self, frame):
         """ only trace lines inside body of functions that are defined by user in same file """
         defined = get_filename(frame) == self.file_path
-        log.info('Checking if frame is for user defined function: %s' % defined)
-        return defined
-
-    def _defined_by_tracing(self, frame):
-        defined = get_filename(frame) == __file__
-        log.info('Checking if frame is for tracing defined function: %s' % defined)
+        # log.info('Checking if frame is for user defined function: %s' % defined)
         return defined
 
     def _getsource(self, frame):
