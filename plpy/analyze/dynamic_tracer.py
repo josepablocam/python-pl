@@ -207,18 +207,12 @@ class DynamicDataTracer(object):
 
     def _called_by_user(self, frame):
         """ only trace calls to functions directly invoked by the user """
-        # called = inspect.getfile(get_caller_frame(frame)) == self.file_path
         called = get_filename(get_caller_frame(frame)) == self.file_path
         log.info('Checking if user called function: %s' % called)
         return called
 
     def _defined_by_user(self, frame):
         """ only trace lines inside body of functions that are defined by user in same file """
-        # try:
-        #     defined =  inspect.getfile(frame) == self.file_path
-        # except TypeError:
-        #     # will be raised for buildin module/class/function, which by definition are not defined by used
-        #     defined =  False
         defined = get_filename(frame) == self.file_path
         log.info('Checking if frame is for user defined function: %s' % defined)
         return defined
@@ -311,6 +305,7 @@ class DynamicDataTracer(object):
             load_mem_locs = self.get_mem_locs(load_references, frame)
             # associate all these with the initial line/lineno and store the event
             trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
+            log.info('Appending trace event: %s' % trace_event)
             self.trace_events.append(trace_event)
         except SyntaxError:
             log.exception('Syntax error while tracing line: %s' % line)
@@ -373,6 +368,7 @@ class DynamicDataTracer(object):
             log.error('Trace call should only run on code written or called by user')
             raise Exception('Tracing non-user code')
 
+        log.info('Tracing call')
         log.info('Trace co_name: %s' % get_co_name(frame))
 
         # retrieve the object for the function being called
@@ -395,10 +391,9 @@ class DynamicDataTracer(object):
             log.info('Function object is a stub: %s' % get_co_name(frame))
             return self.trace_stub(frame, event, arg)
 
-        log.info('Collecting call made by user')
+        log.info('Collecting call made by user for: %s' % func_obj)
         # # increase the depth of the traced stack
         self.traced_stack_depth += 1
-        # call site
         caller_frame = get_caller_frame(frame)
         call_site_lineno = inspect.getlineno(caller_frame)
         call_site_line = self._getsource(caller_frame)
@@ -413,7 +408,6 @@ class DynamicDataTracer(object):
         # because it can allow us to establish a link between a line that calls
         # an function and the actual function call entry
         mem_loc_func = id(func_obj)
-
         details = dict(
             is_method          = is_method,
             co_name            = co_name,
@@ -423,6 +417,7 @@ class DynamicDataTracer(object):
             )
         event_id = self._allocate_event_id()
         trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
+        log.info('Appending trace event: %s' % trace_event)
         self.trace_events.append(trace_event)
 
         # functions that are not defined by the user
@@ -447,6 +442,7 @@ class DynamicDataTracer(object):
             details = {'co_name': get_co_name(frame)}
             event_id = self._allocate_event_id()
             trace_event = ExitCall(event_id, call_site_lineno, call_site_line, details)
+            log.info('Appending trace event: %s' % trace_event)
             self.trace_events.append(trace_event)
 
     def trace_stub(self, frame, event, arg):
