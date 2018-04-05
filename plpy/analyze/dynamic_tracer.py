@@ -89,9 +89,6 @@ def get_function_qual_name(obj):
     if inspect.isframe(obj):
         log.debug('Checking if object is frame')
         obj = get_function_obj(obj)
-    if not inspect.isfunction(obj) and not inspect.ismethod(obj):
-        log.debug('Object is not function/method')
-        return None
     try:
         log.debug('Attempting to access __qualname__ for function object %s' % obj)
         return obj.__qualname__
