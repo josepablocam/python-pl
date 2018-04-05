@@ -52,6 +52,10 @@ def get_function_obj(frame, src_lines=None):
         parent = get_caller_frame(frame)
         if parent:
             log.debug('Retrieving function object through caller frame')
+            log.debug('File name: %s' % get_filename(parent))
+            # always return None if its a function called from the tracer itself
+            if get_filename(parent) == __file__:
+                return None
             if src_lines:
                 src_line = src_lines[get_lineno(parent) - 1].strip()
             else:
@@ -83,10 +87,17 @@ def get_function_obj(frame, src_lines=None):
 def get_function_qual_name(obj):
     # relies on the function object
     if inspect.isframe(obj):
+        log.debug('Checking if object is frame')
         obj = get_function_obj(obj)
-    if obj is None:
+    if not inspect.isfunction(obj) and not inspect.ismethod(obj):
+        log.debug('Object is not function/method')
         return None
-    return obj.__qualname__
+    try:
+        log.debug('Attempting to access __qualname__ for function object %s' % obj)
+        return obj.__qualname__
+    except AttributeError:
+        log.warn('Function does not have __qualname__ attribute: %s' % obj)
+        return None
 
 def get_abstract_vals(arginfo):
     arg_names = arginfo.args
