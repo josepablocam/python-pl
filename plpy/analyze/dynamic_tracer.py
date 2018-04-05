@@ -500,6 +500,12 @@ class DynamicDataTracer(object):
         ext_tree = AddMemoryUpdateStubs(stub_name=memory_update_stub.__qualname__).visit(tree)
         return astunparse.unparse(ext_tree)
 
+    def add_exception_event(self):
+        event_id = self._allocate_event_id()
+        trace_event = ExceptionEvent(event_id)
+        log.debug('Appending exception event before tracer exit')
+        self.trace_events.append(trace_event)
+
     def clear(self):
         log.info('Clear internal state of tracer')
         self.file_path = None
