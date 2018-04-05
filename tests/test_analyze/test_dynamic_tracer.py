@@ -262,6 +262,7 @@ def check_exit_call(event, co_name):
 def make_event_check(fun, *args, **kwargs):
     return lambda x: fun(x, *args, **kwargs)
 
+# function call
 def basic_case_1():
         src = """
             def f(x, y):
@@ -287,6 +288,7 @@ def basic_case_1():
         ]
         return src, expected_event_checks
 
+# static method call
 def basic_case_2():
         src = """
             class A(object):
@@ -316,6 +318,7 @@ def basic_case_2():
         ]
         return src, expected_event_checks
 
+# method call
 def basic_case_3():
         src = """
             import numpy as np
@@ -372,6 +375,7 @@ def basic_case_3():
         ]
         return src, expected_event_checks
 
+# use of with (enter/exit)
 def basic_case_4():
         src = """
             class A(object):
@@ -410,7 +414,29 @@ def basic_case_4():
         ]
         return src, expected_event_checks
 
-@pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3, basic_case_4])
+# call to a C function
+def basic_case_5():
+        src = """
+        import numpy as np
+        v = [1,2,3]
+        v_log = np.log(v)
+        other = 100
+        """
+
+        expected_event_checks = [
+            make_event_check(check_exec_line, line='import numpy as np', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['np']),
+            make_event_check(check_exec_line, line='v = [1,2,3]', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['v']),
+            make_event_check(check_exec_line, line='v_log = np.log(v)', refs_loaded=['np', 'np.log', 'v']),
+            # no enter/exit calls as C function
+            make_event_check(check_memory_update, updates=['v_log']),
+            make_event_check(check_exec_line, line='other = 100', refs_loaded=[]),
+            make_event_check(check_memory_update, updates=['other']),
+        ]
+        return src, expected_event_checks
+
+@pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3, basic_case_4, basic_case_5])
 def test_basic_programs(_input_fun):
     tracer = dt.DynamicDataTracer()
     src, expected_checks = _input_fun()
