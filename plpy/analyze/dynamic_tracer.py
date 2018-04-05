@@ -12,15 +12,6 @@ import sys
 
 from .dynamic_trace_events import *
 
-logging.basicConfig(
-    filename="dynamic_tracer.log",
-    level=logging.DEBUG,
-    format="%(asctime)s:%(levelname)s:%(message)s"
-    )
-log = logging.getLogger(__name__)
-# only log critical messages unless told otherwise
-log.setLevel(logging.CRITICAL)
-
 
 # helper functions
 def to_ast_node(line):
@@ -572,12 +563,14 @@ def main(args):
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
 
-def set_log_handler(logger, file_path):
-    # https://stackoverflow.com/questions/13839554/how-to-change-filehandle-with-python-logging-on-the-fly-with-different-classes-a
-    new_handler = logging.FileHandler(file_path, 'a')
-    for hdlr in logger.handlers[:]:
-        logger.removeHandler(hdlr)
-    logger.addHandler(new_handler)
+def setup_logger(filename, level):
+    logging.basicConfig(
+        filename=filename,
+        level=level,
+        format="%(asctime)s:%(levelname)s:%(message)s"
+        )
+    return logging.getLogger(__name__)
+
 
 if __name__ == '__main__':
     parser = ArgumentParser(description='Execute lifted script with dynamic tracing')
@@ -585,12 +578,12 @@ if __name__ == '__main__':
     parser.add_argument('output_path', type=str, help='Path for pickled tracer with results')
     parser.add_argument('-l', '--log', type=str, help='Path for logging file (slows down tracing significantly)')
     args = parser.parse_args()
-    if args.log:
-        set_log_handler(log, args.log)
-        log.setLevel(logging.DEBUG)
+    log = setup_logger(args.log, logging.DEBUG) if args.log else setup_logger(None, logging.CRITICAL)
     try:
         main(args)
     except Exception as err:
         import pdb
         pdb.post_mortem()
+else:
+    log = setup_logger('dynamic_tracer.log', logging.CRITICAL)
 
