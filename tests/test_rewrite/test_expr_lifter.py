@@ -20,28 +20,32 @@ def test_symbol_increases():
 
 def lift_atomic(expr):
     lifted = lift_expressions(expr)
-    print(astunparse.unparse(lifted))
     assert ast.dump(expr) == ast.dump(lifted)
 
 def lift_non_atomic(orig, expected):
     lifted = lift_expressions(orig)
+    lifted_src = astunparse.unparse(lifted)
+    lifted = ast.parse(lifted)
     assert ast.dump(lifted) == ast.dump(expected)
+
 
 def lift_twice(expr):
     lifted = lift_expressions(expr)
     relifted = lift_expressions(lifted)
     assert ast.dump(lifted) == ast.dump(relifted)
 
+
 # name, atomic, non-atomic, expected
 expr_test_cases = [
-    ('ExtSlice'      , 'x[1:2:3]', 'x[1:2:g()]', '_var0 = g(); x[1:2:_var0]'),
-    ('Slice'         , 'x[1:2]', 'x[(1 + 2):3]', '_var0 = 1 + 2; x[_var0:3]'),
+    # no case of slice that is atomic...we translate `:` syntax to slice() in a preprocessing step
+    ('ExtSlice'      , '', 'x[1:2:g()]', '_var0 = g(); _var1 = slice(1, 2, _var0); x[_var1]'),
+    ('Slice'         , '', 'x[(1 + 2):3]', '_var0 = 1 + 2; _var1 = slice(_var0, 3, None); x[_var1]'),
     ('Dict'          , '{1:10, 2:30}', '{(1+2): 3, 4: 2+g()}', '_var0 = 1+2; _var1 = g(); _var2 = 2+_var1; {_var0: 3, 4:_var2}'),
     ('Set'           , '{1,2}', '{1, g()}', '_var0 = g(); {1, _var0}'),
     ('Tuple'         , '(1, 2)', '(1, g())', '_var0 = g(); (1, _var0)'),
     ('List'          , '[1, 2, 3]', '[1, g(), 3]', '_var0 = g(); [1, _var0, 3]'),
     ('Starred'       , '*x', '*f()', '_var0 = f(); *_var0'),
-    ('Index'         , 'x[1]', 'x[1 + 2]', '_var0 = 1 + 2; x[_var0]'),
+    ('Index'         , 'x[1]', 'x[1 + 2]', '_var0 = 1 + 2; _var1 = _var0; x[_var1]'),
     ('Subscript'     , 'x[1]', 'x[1][2]', '_var0 = x[1]; _var0[2]'),
     ('Attribute'     , 'a.b', 'a.b.c', '_var0 = a.b; _var0.c'),
     ('Call'          , 'f(1, 2, c=1)', 'f(h(), 2, c=g())', '_var0 = h(); _var1 = g(); f(_var0, 2, c=_var1)'),
@@ -147,7 +151,21 @@ stmt_test_cases = [
             _var0 = g()
             f(_var0)
     """),
-    ('Assign','a = 1', 'a = g(h())', '_var0 = h(); a = g(_var0)')
+    ('Assign','a = 1', 'a = g(h())', '_var0 = h(); a = g(_var0)'),
+    ('Slicing Extra',
+    """
+    # nothing
+    """,
+    """
+    m[:, 1]
+    """,
+    """
+    _var0 = slice(None, None, None)
+    _var1 = (_var0, 1)
+    m[_var1]
+    """
+
+    )
 ]
 
 

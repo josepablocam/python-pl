@@ -14,7 +14,13 @@ from astunparse import unparse
 # FIXME:
 # remove unnecessary deepcopy
 # add documentation
-
+class SliceRewriter(ast.NodeTransformer):
+    def visit_Slice(self, node):
+        lower_str = unparse(node.lower) if node.lower else str(None)
+        upper_str = unparse(node.upper) if node.upper else str(None)
+        step_str = unparse(node.step) if node.step else str(None)
+        new_node = ast.parse('slice(%s, %s, %s)' % (lower_str, upper_str, step_str)).body[0].value
+        return ast.copy_location(new_node, node)
 
 class ExpressionLifter(ast.NodeTransformer):
     """
@@ -65,11 +71,19 @@ class ExpressionLifter(ast.NodeTransformer):
             src = ast.parse(src)
         else:
             src = deepcopy(src)
-        return self.visit(src)
+        # remove slices
+        src = SliceRewriter().visit(src)
+        # we don't quite stick to the correct nodes
+        # so just unparse and reparse
+        lifted = self.visit(src)
+        lifted_src = unparse(lifted)
+        return ast.parse(lifted_src)
 
     def is_atomic(self, node):
+        # either clearly atomic
         return isinstance(node, self.atom_types)\
-         or node is None
+             or isinstance(node, ast.Index) and self.is_atomic(node.value)\
+             or node is None
 
     def is_ignorable_expr(self, node):
         return isinstance(node, self.ignore_expr_types)
@@ -383,7 +397,7 @@ class ExpressionLifter(ast.NodeTransformer):
         assignments.extend(value_nodes[0])
         new_node.value = value_nodes[1]
 
-        slice_nodes = self.visit(node.slice)
+        slice_nodes = self.lift(node.slice)
         assignments.extend(slice_nodes[0])
         new_node.slice = slice_nodes[1]
 
@@ -392,7 +406,6 @@ class ExpressionLifter(ast.NodeTransformer):
     def visit_Index(self, node):
         new_node = deepcopy(node)
         assignments = []
-
         value_nodes = self.lift(node.value)
         assignments.extend(value_nodes[0])
         new_node.value = value_nodes[1]
