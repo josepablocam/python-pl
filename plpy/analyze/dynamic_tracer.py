@@ -382,7 +382,9 @@ class DynamicDataTracer(object):
             co_name            = co_name,
             qualname           = qualname,
             abstract_call_args = abstract_call_args,
-            mem_loc_func       = mem_loc_func
+            mem_loc_func       = mem_loc_func,
+            called_by_user     = self._called_by_user(frame),
+            defined_by_user    = self._defined_by_user(frame),
             )
         event_id = self._allocate_event_id()
         trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
@@ -401,7 +403,11 @@ class DynamicDataTracer(object):
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
-            details = {'co_name': get_co_name(frame)}
+            details = dict(
+                co_name            = get_co_name(frame),
+                called_by_user     = self._called_by_user(frame),
+                defined_by_user    = self._defined_by_user(frame),
+            )
             event_id = self._allocate_event_id()
             trace_event = ExitCall(event_id, call_site_lineno, call_site_line, details)
             log.info('Appending trace event: %s' % trace_event)
