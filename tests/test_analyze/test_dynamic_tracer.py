@@ -451,13 +451,62 @@ def basic_case_5():
         ]
         return src, expected_event_checks
 
-@pytest.mark.parametrize('_input_fun', [basic_case_1, basic_case_2, basic_case_3, basic_case_4, basic_case_5])
+# non-local variable in function and using a function closure
+def basic_case_6():
+    src = """
+    _times = 2
+    def mult(x):
+        return x * _times
+    mult(10)
+
+    def with_closure():
+        x = 100
+        def times_100(y):
+            return y * x
+        return times_100
+
+    f = with_closure()
+    f(10)
+    """
+
+    expected_event_checks = [
+        make_event_check(check_exec_line, line='_times = 2', refs_loaded=[]),
+        make_event_check(check_memory_update, updates=['_times']),
+        make_event_check(check_exec_line, line='mult(10)', refs_loaded=['mult']),
+        make_event_check(check_enter_call, qualname='mult', call_args=['x'], is_method=False),
+        make_event_check(check_exec_line, line='return x * _times', refs_loaded=['x', '_times']),
+        make_event_check(check_exit_call, co_name='mult'),
+        make_event_check(check_exec_line, line='f = with_closure()', refs_loaded=['with_closure']),
+        make_event_check(check_enter_call, qualname='with_closure', call_args=[], is_method=False),
+        make_event_check(check_exec_line, line='x = 100', refs_loaded = []),
+        make_event_check(check_memory_update, updates=['x']),
+        make_event_check(check_exec_line, line='return times_100', refs_loaded=['times_100']),
+        make_event_check(check_exit_call, co_name='with_closure'),
+        make_event_check(check_memory_update, updates=['f']),
+        make_event_check(check_exec_line, line='f(10)', refs_loaded=['f']),
+        make_event_check(check_enter_call, qualname='with_closure.<locals>.times_100', call_args = ['y'], is_method=False),
+        make_event_check(check_exec_line, 'return y * x', refs_loaded=['x', 'y']),
+        make_event_check(check_exit_call, co_name='times_100'),
+    ]
+    return src, expected_event_checks
+
+basic_cases = [
+    basic_case_1,
+    basic_case_2,
+    basic_case_3,
+    basic_case_4,
+    basic_case_5,
+    basic_case_6,
+]
+
+@pytest.mark.parametrize('_input_fun', basic_cases)
 def test_basic_programs(_input_fun):
     tracer = dt.DynamicDataTracer()
     src, expected_checks = _input_fun()
     src = textwrap.dedent(src)
     tracer.run(src)
 
+    print(list(map(str, tracer.trace_events)))
     assert len(tracer.trace_events) == len(expected_checks), 'The event and checks are mismatched.'
     for event, check in zip(tracer.trace_events, expected_checks):
         check(event)

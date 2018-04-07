@@ -8,6 +8,7 @@ import logging
 import os
 import pickle
 import sys
+import traceback
 
 
 from .dynamic_trace_events import *
@@ -338,8 +339,7 @@ class DynamicDataTracer(object):
         return mem_locs
 
     def trace_call(self, frame, event, arg):
-        log.info('Tracing call')
-        log.info('Trace co_name: %s' % get_co_name(frame))
+        log.info('Trace call (co_name=%s)' % get_co_name(frame))
 
         # retrieve the object for the function being called
         func_obj = get_function_obj(frame, src_lines=self.src_lines)
@@ -394,7 +394,7 @@ class DynamicDataTracer(object):
         return self.trace
 
     def trace_return(self, frame, event, arg):
-        log.info('Trace return')
+        log.info('Trace return (co_name=%s)' % get_co_name(frame))
         # we need to make sure we are expecting a return event
         # since things like exiting a class def produces a return event
         if self.traced_stack_depth > 0:
@@ -475,9 +475,9 @@ class DynamicDataTracer(object):
         ext_tree = AddMemoryUpdateStubs(stub_name=memory_update_stub.__qualname__).visit(tree)
         return astunparse.unparse(ext_tree)
 
-    def add_exception_event(self):
+    def add_exception_event(self, msg):
         event_id = self._allocate_event_id()
-        trace_event = ExceptionEvent(event_id)
+        trace_event = ExceptionEvent(event_id, msg)
         log.debug('Appending exception event before tracer exit')
         self.trace_events.append(trace_event)
 
@@ -510,7 +510,6 @@ class DynamicDataTracer(object):
         self.file_path = instrumented_file_path
         # add in additional mappings
         _globals = {}
-        _locals = {}
         _globals['__name__'] = '__main__'
         _globals['__file__'] = self.file_path
         _globals['__builtins__'] = __builtins__
@@ -519,11 +518,15 @@ class DynamicDataTracer(object):
         compiled = compile(src, filename=self.file_path, mode='exec')
         try:
             self.setup()
-            # pass in both to make sure imported modules are there during tracing
-            exec(compiled, _globals, _locals)
+            # don't provide _locals based on
+            # https://stackoverflow.com/questions/39647566/why-does-python-3-exec-fail-when-specifying-locals
+            # otherwise we don't get the correct scope for exec
+            exec(compiled, _globals)
         except Exception as err:
             self.shutdown()
-            self.add_exception_event()
+            log.exception('Error during script execution')
+            self.add_exception_event(traceback.format_exc())
+            raise err
         finally:
             self.shutdown()
 
@@ -551,11 +554,7 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--log', type=str, help='Path for logging file (slows down tracing significantly)')
     args = parser.parse_args()
     log = setup_logger(args.log, logging.DEBUG) if args.log else setup_logger(None, logging.CRITICAL)
-    try:
-        main(args)
-    except Exception as err:
-        import pdb
-        pdb.post_mortem()
+    main(args)
 else:
     log = setup_logger('dynamic_tracer.log', logging.CRITICAL)
 

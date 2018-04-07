@@ -49,8 +49,9 @@ class ExitCall(TraceEvent):
 
 # mainly used to mark the abnormal end of tracing
 class ExceptionEvent(TraceEvent):
-    def __init__(self, event_id):
+    def __init__(self, event_id, msg):
         self.event_id = event_id
+        self.msg = msg
 
     def __str__(self):
         return 'abnormal exit (exception)'
