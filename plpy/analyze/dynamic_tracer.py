@@ -31,7 +31,7 @@ def get_co_name(frame):
     return frame.f_code.co_name
 
 # this is a horrendous hack... but not sure that there is a better way
-def get_function_obj(frame, src_lines=None):
+def get_function_obj(frame, src_lines=None, filename=None):
     # can't get function object if we don't actually
     # have the frame
     if frame is None or frame.f_back is None:
@@ -48,11 +48,12 @@ def get_function_obj(frame, src_lines=None):
             # always return None if its a function called from the tracer itself
             if get_filename(parent) == __file__:
                 return None
-            if src_lines:
+            if src_lines and get_filename(parent) == filename:
                 src_line = src_lines[get_lineno(parent) - 1].strip()
             else:
                 # note that inspect.getframeinfo is super expensive
                 # so this is for completeness only...
+                log.debug('Looking up function using frameinfo')
                 src_line = inspect.getframeinfo(parent).code_context[0].strip()
             log.debug('Call (based on parent frame): %s' % src_line)
             ast_node = to_ast_node(src_line)
@@ -186,6 +187,7 @@ class DynamicDataTracer(object):
         self.trace_errors = []
         self.orig_tracer = None
         self.traced_stack_depth = 0
+        self.watch_frame = None
 
     def _allocate_event_id(self):
         log.info('Allocated new event id')
@@ -197,6 +199,10 @@ class DynamicDataTracer(object):
         """ only trace calls to functions directly invoked by the user """
         called = get_filename(get_caller_frame(frame)) == self.file_path
         # log.info('Checking if user called function: %s' % called)
+        return called
+
+    def _called_by_tracer(self, frame):
+        called = get_filename(get_caller_frame(frame)) == __file__
         return called
 
     def _defined_by_user(self, frame):
@@ -222,13 +228,44 @@ class DynamicDataTracer(object):
 
     def trace(self, frame, event, arg):
         try:
-            # we only trace user code
-            if not self._called_by_user(frame) and not self._defined_by_user(frame):
+            # we are waiting to return to a user code frame
+            if self.watch_frame:
+                if frame != self.watch_frame:
+                    # we let return's continue to pair with the enter call for non-user function
+                    if event != 'return':
+                        # ignore the rest of this if the event was not a return and frame doesn't match watched
+                        return None
+                else:
+                    # returned to the point in the stack we wanted, so clear the watch
+                    self.watch_frame = None
+
+            if not self._called_by_user(frame) and not self._called_by_tracer(frame):
+                # don't instrument if we're executing code that was not called by the user or tracer itself
+                # note that it is possible for non-user code to invoke user-defined code (e.g. a lambda defined by user)
+                # so this check avoids cases where we would not instrument the body of third party library function
+                # but each call in the body to a user-defined function would result in a trace event
+                #
+                # look for the last frame called by the user and wait there
+                current_frame = frame
+                while not self._called_by_user(current_frame):
+                    current_frame = get_caller_frame(current_frame)
+                self.watch_frame = current_frame
+                log.info('Code not called by user or tracer')
+                log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
+                log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
                 return None
 
-            # we don't trace bodies of library functions, event if called by user
-            if not self._defined_by_user(frame) and event == 'line':
-                return None
+            # the user can call functions they don't define (e.g. third party libraries)
+            # if this is the case, then, set the watch frame as the last frame
+            # in code that they defined
+            if event == 'call' and not self._defined_by_user(frame):
+                current_frame = frame
+                while not self._defined_by_user(current_frame):
+                    current_frame = get_caller_frame(current_frame)
+                self.watch_frame = current_frame
+                log.info('Call for code not defined by user')
+                log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
+                log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
 
             if event == 'call':
                 return self.trace_call(frame, event, arg)
@@ -342,7 +379,7 @@ class DynamicDataTracer(object):
         log.info('Trace call (co_name=%s)' % get_co_name(frame))
 
         # retrieve the object for the function being called
-        func_obj = get_function_obj(frame, src_lines=self.src_lines)
+        func_obj = get_function_obj(frame, src_lines=self.src_lines, filename=self.file_path)
 
         # either not a function call (e.g. entered code block)
         # or couldn't retrieve function source to get object
@@ -415,7 +452,7 @@ class DynamicDataTracer(object):
 
     def trace_stub(self, frame, event, arg):
         log.info('Tracing stub')
-        stub_obj = get_function_obj(frame, src_lines=self.src_lines)
+        stub_obj = get_function_obj(frame, src_lines=self.src_lines, filename=self.file_path)
         if stub_obj.__name__ != get_co_name(frame):
             # stub objects are guaranteed to have the co_name match the object name
             # if this is not the case, then this is not actually a stub
@@ -528,6 +565,7 @@ class DynamicDataTracer(object):
             self.add_exception_event(traceback.format_exc())
             raise err
         finally:
+            self.watch_frame = None
             self.shutdown()
 
 

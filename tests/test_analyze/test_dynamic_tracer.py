@@ -490,6 +490,43 @@ def basic_case_6():
     ]
     return src, expected_event_checks
 
+# call user code from non-user code
+def basic_case_7():
+    src = """
+    import pandas as pd
+    s = pd.Series([1, 2, 3])
+    def g():
+        return 2
+    def f(x):
+        g()
+        return x * 2
+    f(10)
+    s.apply(f)
+    """
+
+    expected_event_checks = [
+        make_event_check(check_exec_line, line='import pandas as pd', refs_loaded=[]),
+        make_event_check(check_memory_update, updates=['pd']),
+        make_event_check(check_exec_line, line='s = pd.Series([1,2,3])', refs_loaded=['pd', 'pd.Series']),
+        make_event_check(check_enter_call, qualname='Series', call_args=None, is_method=False),
+        make_event_check(check_exit_call, co_name='__init__'),
+        make_event_check(check_memory_update, updates=['s']),
+        make_event_check(check_exec_line, line='f(10)', refs_loaded=['f']),
+        make_event_check(check_enter_call, qualname='f', call_args=['x'], is_method=False),
+        make_event_check(check_exec_line, line='g()', refs_loaded=['g']),
+        make_event_check(check_enter_call, qualname='g', call_args=[], is_method=False),
+        make_event_check(check_exec_line, line='return 2', refs_loaded=[]),
+        make_event_check(check_exit_call, co_name='g'),
+        make_event_check(check_exec_line, line='return x * 2', refs_loaded=['x']),
+        make_event_check(check_exit_call, co_name='f'),
+        make_event_check(check_exec_line, line='s.apply(f)', refs_loaded=['s', 's.apply', 'f']),
+        # note that there is no entries for the f calls inside apply
+        make_event_check(check_enter_call, qualname='Series.apply', call_args=None, is_method=True),
+        make_event_check(check_exit_call, co_name='apply'),
+    ]
+
+    return src, expected_event_checks
+
 basic_cases = [
     basic_case_1,
     basic_case_2,
@@ -497,6 +534,7 @@ basic_cases = [
     basic_case_4,
     basic_case_5,
     basic_case_6,
+    basic_case_7,
 ]
 
 @pytest.mark.parametrize('_input_fun', basic_cases)
