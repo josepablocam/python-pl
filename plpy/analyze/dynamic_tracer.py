@@ -463,15 +463,10 @@ class DynamicDataTracer(object):
             # this could be a stub line, and then that function gets retrieved as an object
             # despite the mismatch
             return None
-        stub_event = None
         if stub_obj == memory_update_stub:
-            stub_event = self.consume_memory_update_stub(frame, event, arg)
+            self.consume_memory_update_stub(frame, event, arg)
         else:
             raise Exception("Unknown stub qualified name: %s" % get_function_qual_name(stub_obj))
-        # remove stub from trace of events
-        if stub_event:
-            self.trace_events.pop()
-            self.trace_events.append(stub_event)
 
     def consume_memory_update_stub(self, frame, event, arg):
         log.info('Consuming memory_update_stub call event')
@@ -491,7 +486,8 @@ class DynamicDataTracer(object):
         memory_locations = {name:id(val) for name, val in zip(names, values)}
         event_id = self._allocate_event_id()
         trace_event = MemoryUpdate(event_id, memory_locations, lineno)
-        return trace_event
+        self.trace_events.pop()
+        self.trace_events.append(trace_event)
 
     def setup(self):
         log.info('Setting up tracing function')
