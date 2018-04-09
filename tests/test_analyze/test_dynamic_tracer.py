@@ -260,6 +260,9 @@ def check_exit_call(event, co_name):
     assert isinstance(event, ExitCall)
     assert event.details['co_name'] == co_name
 
+def check_ignore(event):
+    pass
+
 def make_event_check(fun, *args, **kwargs):
     return lambda x: fun(x, *args, **kwargs)
 
@@ -527,6 +530,65 @@ def basic_case_7():
 
     return src, expected_event_checks
 
+# assignment that calls __setitem__, make sure we don't trigger that
+def basic_case_8():
+    src = """
+    d = {1:2, 2:3}
+    d[1] = 1000
+    """
+
+    expected_event_checks = [
+        make_event_check(check_exec_line, line='d = {1:2, 2:3}', refs_loaded=[]),
+        make_event_check(check_memory_update, updates=['d']),
+        make_event_check(check_exec_line, line='d[1] = 1000', refs_loaded=['d']),
+        make_event_check(check_memory_update, updates=['d']),
+    ]
+
+    return src, expected_event_checks
+
+# bounded loop
+def basic_case_9():
+    src = """
+    class A(object):
+        def __init__(self, v):
+            self.v = 10
+
+    x = 0
+    while x < 10:
+        for i in range(10):
+            i
+        x += 1
+
+    a = A(1)
+    a.v += 1
+    """
+    loop_bound = 2
+    expected_event_checks = [
+        make_event_check(check_exec_line, line='x = 0', refs_loaded=[]),
+        make_event_check(check_memory_update, updates=['x']),
+        # bounded to two
+        make_event_check(check_exec_line, line='i', refs_loaded=['i']),
+        make_event_check(check_exec_line, line='i', refs_loaded=['i']),
+        make_event_check(check_exec_line, line='x += 1', refs_loaded=['x']),
+        make_event_check(check_memory_update, updates=['x']),
+        # bounded to two
+        make_event_check(check_exec_line, line='i', refs_loaded=['i']),
+        make_event_check(check_exec_line, line='i', refs_loaded=['i']),
+        make_event_check(check_exec_line, line='x += 1', refs_loaded=['x']),
+        make_event_check(check_memory_update, updates=['x']),
+        # done with outer loop
+        # outside
+        make_event_check(check_exec_line, line='a = A(1)', refs_loaded=['A']),
+        make_event_check(check_ignore), # enter call
+        make_event_check(check_ignore), # line
+        make_event_check(check_ignore), # memory update
+        make_event_check(check_ignore), # exit call
+        make_event_check(check_ignore), # memory update
+        make_event_check(check_exec_line, line='a.v += 1', refs_loaded=['a', 'a.v']),
+        make_event_check(check_memory_update, updates=['a', 'a.v']),
+    ]
+    return src, expected_event_checks, loop_bound
+
 basic_cases = [
     basic_case_1,
     basic_case_2,
@@ -535,12 +597,20 @@ basic_cases = [
     basic_case_5,
     basic_case_6,
     basic_case_7,
+    basic_case_8,
+    basic_case_9,
 ]
 
 @pytest.mark.parametrize('_input_fun', basic_cases)
 def test_basic_programs(_input_fun):
-    tracer = dt.DynamicDataTracer()
-    src, expected_checks = _input_fun()
+    test_inputs = _input_fun()
+    if len(test_inputs) == 2:
+        src, expected_checks = test_inputs
+        loop_bound = None
+    else:
+        src, expected_checks, loop_bound = test_inputs
+
+    tracer = dt.DynamicDataTracer(loop_bound=loop_bound)
     src = textwrap.dedent(src)
     tracer.run(src)
 

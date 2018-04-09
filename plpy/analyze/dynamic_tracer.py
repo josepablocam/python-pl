@@ -102,17 +102,17 @@ def get_abstract_vals(arginfo):
 # into source code to mark events for trace tracking
 def memory_update_stub(names, values):
     pass
-    
+
 def loop_counter_init_stub(name):
     pass
-    
-def loop_counter_inc_stub(name):
+
+def loop_counter_incr_stub(name):
     pass
-    
+
 def loop_counter_clear_stub(name):
     pass
 
-STUBS = [memory_update_stub]
+STUBS = [memory_update_stub, loop_counter_init_stub, loop_counter_incr_stub, loop_counter_clear_stub]
 
 def is_stub_call(func_obj):
     return func_obj in STUBS
@@ -191,6 +191,46 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         return to_ast_node(call_str)
 
 
+class AddLoopCounterStubs(ast.NodeTransformer):
+    def __init__(self, init_stub_name, incr_stub_name, clear_stub_name, loop_var_format='_loop_var_%d'):
+        self.init_stub_name = init_stub_name
+        self.incr_stub_name = incr_stub_name
+        self.clear_stub_name = clear_stub_name
+        self.loop_counter = 0
+        self.loop_var_format = loop_var_format
+
+    def _allocate_loop_var(self):
+        loop_var = self.loop_var_format % self.loop_counter
+        self.loop_counter += 1
+        return loop_var
+
+    def _add_loop_stubs(self, loop_node):
+        # right before
+        loop_var = self._allocate_loop_var()
+        init_stub = self._create_stub_node(self.init_stub_name, loop_var)
+        incr_stub = self._create_stub_node(self.incr_stub_name, loop_var)
+        clear_stub = self._create_stub_node(self.clear_stub_name, loop_var)
+        loop_node.body.append(incr_stub)
+        results = [init_stub]
+        recursive_nodes = self.generic_visit(loop_node)
+        try:
+            results.extend(recursive_nodes)
+        except TypeError:
+            results.append(recursive_nodes)
+        results.append(clear_stub)
+        return results
+
+    def visit_While(self, node):
+        return self._add_loop_stubs(node)
+
+    def visit_For(self, node):
+        return self._add_loop_stubs(node)
+
+    def _create_stub_node(self, stub_name, loop_var):
+        call_str = f'{stub_name}("{loop_var}")'
+        return to_ast_node(call_str)
+
+
 class DynamicDataTracer(object):
     def __init__(self, loop_bound=None):
         # information for program being traced
@@ -251,11 +291,6 @@ class DynamicDataTracer(object):
 
     def trace(self, frame, event, arg):
         try:
-            # turned off tracing due to loop
-            if self.ignored_loops and not (event == 'call' and self._defined_by_tracer(frame)):
-                # ignore everything
-                return None
-            
             # we are waiting to return to a user code frame
             if self.watch_frame:
                 if frame != self.watch_frame:
@@ -310,6 +345,16 @@ class DynamicDataTracer(object):
             log.exception("Exception raised by tracer code")
             self.shutdown()
 
+    # events can only be pushed or popped from
+    # our tracer if we are not ignoring due to loops
+    # note that this still traces, just doesn't record the events
+    def push_trace_event(self, event):
+        if not self.ignored_loops:
+            self.trace_events.append(event)
+
+    def pop_trace_event(self):
+        if not self.ignored_loops:
+            self.trace_events.pop()
 
     def convert_with_items_to_lines(self, line):
         log.info('Converting with-statement items to separate lines for tracer')
@@ -349,10 +394,10 @@ class DynamicDataTracer(object):
             # associate all these with the initial line/lineno and store the event
             trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
             log.info('Appending trace event: %s' % trace_event)
-            self.trace_events.append(trace_event)
+            self.push_trace_event(trace_event)
         except SyntaxError:
             log.exception('Syntax error while tracing line: %s' % line)
-            self.trace_errors.append((frame.f_code.co_name, event, arg, line))
+            # self.trace_errors.append((frame.f_code.co_name, event, arg, line))
         return self.trace
 
     def get_load_references_from_line(self, line):
@@ -456,7 +501,7 @@ class DynamicDataTracer(object):
         event_id = self._allocate_event_id()
         trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
         log.info('Appending trace event: %s' % trace_event)
-        self.trace_events.append(trace_event)
+        self.push_trace_event(trace_event)
 
         return self.trace
 
@@ -478,7 +523,7 @@ class DynamicDataTracer(object):
             event_id = self._allocate_event_id()
             trace_event = ExitCall(event_id, call_site_lineno, call_site_line, details)
             log.info('Appending trace event: %s' % trace_event)
-            self.trace_events.append(trace_event)
+            self.push_trace_event(trace_event)
 
     def trace_stub(self, frame, event, arg):
         log.info('Tracing stub')
@@ -495,8 +540,14 @@ class DynamicDataTracer(object):
             return None
         if stub_obj == memory_update_stub:
             self.consume_memory_update_stub(frame, event, arg)
+        elif stub_obj == loop_counter_init_stub:
+            self.consume_loop_counter_init_stub(frame, event, arg)
+        elif stub_obj == loop_counter_incr_stub:
+            self.consume_loop_counter_incr_stub(frame, event, arg)
+        elif stub_obj == loop_counter_clear_stub:
+            self.consume_loop_counter_clear_stub(frame, event, arg)
         else:
-            raise Exception("Unknown stub qualified name: %s" % get_function_qual_name(stub_obj))
+            raise Exception("Unhandled stub qualified name: %s" % get_function_qual_name(stub_obj))
 
     def consume_memory_update_stub(self, frame, event, arg):
         log.info('Consuming memory_update_stub call event')
@@ -516,35 +567,41 @@ class DynamicDataTracer(object):
         memory_locations = {name:id(val) for name, val in zip(names, values)}
         event_id = self._allocate_event_id()
         trace_event = MemoryUpdate(event_id, memory_locations, lineno)
-        self.trace_events.pop()
-        self.trace_events.append(trace_event)
-        
+        self.pop_trace_event()
+        self.push_trace_event(trace_event)
+
     def check_loop_name(self, loop_name):
         # we are bounding loops and this loop has exceeded the limit set by user
         if self.loop_bound is not None and self.loop_counters.get(loop_name, 0) >= self.loop_bound:
+            log.debug('Adding loop variable %s to ignored loops' % loop_name)
             self.ignored_loops.add(loop_name)
 
     def consume_loop_counter_init_stub(self, frame, event, arg):
         log.info('Consuming loop_counter_init call event')
-        loop_name = inspect.getargvalues(frame)[0]
+        arginfo = inspect.getargvalues(frame)
+        loop_name = arginfo.locals[arginfo.args[0]]
         log.info('Init loop counter at %s' % loop_name)
         self.loop_counters[loop_name] = 0
         self.check_loop_name(loop_name)
-            
-    def consume_loop_counter_inc_stub(self, frame, event, arg):
-        log.info('Consuming loop_counter_inc call event')
-        loop_name = inspect.getargvalues(frame)[0]
+        self.pop_trace_event()
+
+    def consume_loop_counter_incr_stub(self, frame, event, arg):
+        log.info('Consuming loop_counter_incr call event')
+        arginfo = inspect.getargvalues(frame)
+        loop_name = arginfo.locals[arginfo.args[0]]
         log.info('Increasing loop counter at %s' % loop_name)
         self.loop_counters[loop_name] += 1
         self.check_loop_name(loop_name)
-        
+        self.pop_trace_event()
+
     def consume_loop_counter_clear_stub(self, frame, event, arg):
         log.info('Consume loop_counter_clear call event')
-        loop_name = inspect.getargvalues(frame)[0]
+        arginfo = inspect.getargvalues(frame)
+        loop_name = arginfo.locals[arginfo.args[0]]
         log.info('Clearing loop counter at %s' % loop_name)
         self.loop_counters[loop_name] = 0
         self.ignored_loops.discard(loop_name)
->>>>>>> Stashed changes
+        self.pop_trace_event()
 
     def setup(self):
         log.info('Setting up tracing function')
@@ -563,6 +620,12 @@ class DynamicDataTracer(object):
         log.info('Adding any stubs to provided source code')
         tree = ast.parse(src)
         ext_tree = AddMemoryUpdateStubs(stub_name=memory_update_stub.__qualname__).visit(tree)
+        loop_stubber = AddLoopCounterStubs(
+            init_stub_name=loop_counter_init_stub.__qualname__,
+            incr_stub_name=loop_counter_incr_stub.__qualname__,
+            clear_stub_name=loop_counter_clear_stub.__qualname__
+        )
+        ext_tree = loop_stubber.visit(ext_tree)
         return astunparse.unparse(ext_tree)
 
     def add_exception_event(self, msg):
@@ -573,13 +636,17 @@ class DynamicDataTracer(object):
 
     def clear(self):
         log.info('Clear internal state of tracer')
+        # for program that will be traced
         self.file_path = None
         self.src_lines = []
         self.trace_events = []
         self.trace_errors = []
         self.event_counter = 0
+        # keep track of what to trace and not
         self.traced_stack_depth = 0
         self.watch_frame = None
+        # loop bounding
+        self.loop_counters = {}
         self.ignored_loops = set([])
 
     def run(self, file_path):
@@ -606,8 +673,9 @@ class DynamicDataTracer(object):
         _globals['__name__'] = '__main__'
         _globals['__file__'] = self.file_path
         _globals['__builtins__'] = __builtins__
-        # stubs
-        _globals[memory_update_stub.__qualname__] =  memory_update_stub
+        # add stubs to namespace
+        for stub in STUBS:
+            _globals[stub.__qualname__] = stub
         compiled = compile(src, filename=self.file_path, mode='exec')
         try:
             self.setup()
@@ -628,7 +696,7 @@ class DynamicDataTracer(object):
 def main(args):
     src = open(args.input_path).read()
     tracer = DynamicDataTracer(loop_bound=args.loop_bound)
-    tracer.run(src, loop_bound=args.bound)
+    tracer.run(src)
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
 
@@ -646,7 +714,7 @@ if __name__ == '__main__':
     parser.add_argument('input_path', type=str, help='Path to lifted source')
     parser.add_argument('output_path', type=str, help='Path for pickled tracer with results')
     parser.add_argument('-l', '--log', type=str, help='Path for logging file (slows down tracing significantly)')
-    parser.add_argument('-b', '--bound', type=int, help='Loop bound for tracing')
+    parser.add_argument('-b', '--loop_bound', type=int, help='Loop bound for tracing')
     args = parser.parse_args()
     log = setup_logger(args.log, logging.DEBUG) if args.log else setup_logger(None, logging.CRITICAL)
     main(args)
