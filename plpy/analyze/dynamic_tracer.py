@@ -140,7 +140,7 @@ def get_nested_references(node, exclude_first=False):
     refs = ExtractReferences().run(node)
     if exclude_first:
         refs = refs[1:]
-    return refs
+    return set(refs)
 
 
 class AddMemoryUpdateStubs(ast.NodeTransformer):
@@ -707,6 +707,7 @@ def main(args):
     tracer.run(src)
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
+    # print(list(map(str, tracer.trace_events)))
 
 def setup_logger(filename, level):
     logging.basicConfig(
