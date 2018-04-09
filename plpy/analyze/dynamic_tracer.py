@@ -100,7 +100,7 @@ def get_abstract_vals(arginfo):
 
 # stub functions that are inserted
 # into source code to mark events for trace tracking
-def memory_update_stub(names, values):
+def memory_update_stub(names):
     pass
 
 def loop_counter_init_stub(name):
@@ -186,8 +186,7 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         else:
             references.extend(targets)
         names_str = ','.join(['"%s"' % ref for ref in references])
-        values_str = ','.join(references)
-        call_str = f'{self.stub_name}([{names_str}], [{values_str}])'
+        call_str = f'{self.stub_name}([{names_str}])'
         return to_ast_node(call_str)
 
 
@@ -560,15 +559,10 @@ class DynamicDataTracer(object):
         # the actual line that triggered this stub call is one line up
         lineno = inspect.getlineno(caller) - 1
         arginfo = inspect.getargvalues(frame)
-        if len(arginfo.args) != 2:
-            log.error('memory_update_stub should only have 2 argumnets: list of names and list of values')
-            log.error('ArgumentInfo: %s' % arginfo.args)
-            raise TypeError('memory_update_stub should have 2 arguments')
         # memory locations that need to be updated
         names = arginfo.locals[arginfo.args[0]]
-        values = arginfo.locals[arginfo.args[1]]
         # memory locations associated with those references
-        memory_locations = {name:id(val) for name, val in zip(names, values)}
+        memory_locations = self.get_mem_locs(names, frame)
         event_id = self._allocate_event_id()
         trace_event = MemoryUpdate(event_id, memory_locations, lineno)
         self.pop_trace_event()

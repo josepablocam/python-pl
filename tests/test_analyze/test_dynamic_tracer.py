@@ -149,7 +149,7 @@ def test_extract_references(node_str, full_expected, all_but_first_expected):
 def test_register_assignment_stubs():
     stubber = dt.AddMemoryUpdateStubs('_stub')
     src = "x = 1; y = f(); z += 1"
-    expected = "x = 1; _stub(['x'], [x]); y = f(); _stub(['y'], [y]); z += 1; _stub(['z'], [z])"
+    expected = "x = 1; _stub(['x']); y = f(); _stub(['y']); z += 1; _stub(['z'])"
     with_stubs = stubber.visit(ast.parse(src))
     assert ast.dump(with_stubs) == ast.dump(ast.parse(expected))
 
@@ -161,13 +161,13 @@ def test_register_assignment_stubs():
     """
     expected_with_imports = """
     import numpy as np
-    _stub(['np'], [np])
+    _stub(['np'])
     import sklearn.preprocessing
-    _stub(['sklearn.preprocessing'], [sklearn.preprocessing])
+    _stub(['sklearn.preprocessing'])
     from sklearn import linear_models
-    _stub(['linear_models'], [linear_models])
+    _stub(['linear_models'])
     from sklearn import linear_models as lm
-    _stub(['lm'], [lm])
+    _stub(['lm'])
     """
     src_with_imports = textwrap.dedent(src_with_imports)
     expected_with_imports = textwrap.dedent(expected_with_imports)
@@ -177,7 +177,7 @@ def test_register_assignment_stubs():
 def test_is_stub_call():
     tracer = BasicTracer(dt.get_function_obj)
     with tracer:
-        dt.memory_update_stub(['var'], [10])
+        dt.memory_update_stub(['var'])
     assert dt.is_stub_call(tracer.result_acc[0]), 'Calling a stub function should yield true'
 
     tracer.result_acc = []
