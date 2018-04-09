@@ -22,9 +22,13 @@ def get_lineno(frame):
     return frame.f_lineno
 
 def get_caller_frame(frame):
+    if frame is None:
+        return None
     return frame.f_back
 
 def get_filename(frame):
+    if frame is None:
+        return None
     return frame.f_code.co_filename
 
 def get_co_name(frame):
@@ -97,6 +101,15 @@ def get_abstract_vals(arginfo):
 # stub functions that are inserted
 # into source code to mark events for trace tracking
 def memory_update_stub(names, values):
+    pass
+    
+def loop_counter_init_stub(name):
+    pass
+    
+def loop_counter_inc_stub(name):
+    pass
+    
+def loop_counter_clear_stub(name):
     pass
 
 STUBS = [memory_update_stub]
@@ -179,15 +192,21 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
 
 
 class DynamicDataTracer(object):
-    def __init__(self):
+    def __init__(self, loop_bound=None):
+        # information for program being traced
         self.file_path = None
         self.src_lines = None
+        # information for trace events
         self.event_counter = 0
         self.trace_events = []
         self.trace_errors = []
         self.orig_tracer = None
+        # information to manage tracing on/off
         self.traced_stack_depth = 0
         self.watch_frame = None
+        self.loop_bound = loop_bound
+        self.loop_counters = {}
+        self.ignored_loops = set([])
 
     def _allocate_event_id(self):
         log.info('Allocated new event id')
@@ -211,6 +230,10 @@ class DynamicDataTracer(object):
         # log.info('Checking if frame is for user defined function: %s' % defined)
         return defined
 
+    def _defined_by_tracer(self, frame):
+        defined = get_filename(frame) == __file__
+        return defined
+
     def _getsource(self, frame):
         # we strip before returning the line as
         # we often use this line to parse a node
@@ -228,6 +251,11 @@ class DynamicDataTracer(object):
 
     def trace(self, frame, event, arg):
         try:
+            # turned off tracing due to loop
+            if self.ignored_loops and not (event == 'call' and self._defined_by_tracer(frame)):
+                # ignore everything
+                return None
+            
             # we are waiting to return to a user code frame
             if self.watch_frame:
                 if frame != self.watch_frame:
@@ -247,12 +275,13 @@ class DynamicDataTracer(object):
                 #
                 # look for the last frame called by the user and wait there
                 current_frame = frame
-                while not self._called_by_user(current_frame):
+                while current_frame and not self._called_by_user(current_frame):
                     current_frame = get_caller_frame(current_frame)
-                self.watch_frame = current_frame
-                log.info('Code not called by user or tracer')
-                log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
-                log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
+                if current_frame:
+                    self.watch_frame = current_frame
+                    log.info('Code not called by user or tracer')
+                    log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
+                    log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
                 return None
 
             # the user can call functions they don't define (e.g. third party libraries)
@@ -260,12 +289,13 @@ class DynamicDataTracer(object):
             # in code that they defined
             if event == 'call' and not self._defined_by_user(frame):
                 current_frame = frame
-                while not self._defined_by_user(current_frame):
+                while current_frame and not self._defined_by_user(current_frame):
                     current_frame = get_caller_frame(current_frame)
-                self.watch_frame = current_frame
-                log.info('Call for code not defined by user')
-                log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
-                log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
+                if current_frame:
+                    self.watch_frame = current_frame
+                    log.info('Call for code not defined by user')
+                    log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
+                    log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
 
             if event == 'call':
                 return self.trace_call(frame, event, arg)
@@ -488,6 +518,33 @@ class DynamicDataTracer(object):
         trace_event = MemoryUpdate(event_id, memory_locations, lineno)
         self.trace_events.pop()
         self.trace_events.append(trace_event)
+        
+    def check_loop_name(self, loop_name):
+        # we are bounding loops and this loop has exceeded the limit set by user
+        if self.loop_bound is not None and self.loop_counters.get(loop_name, 0) >= self.loop_bound:
+            self.ignored_loops.add(loop_name)
+
+    def consume_loop_counter_init_stub(self, frame, event, arg):
+        log.info('Consuming loop_counter_init call event')
+        loop_name = inspect.getargvalues(frame)[0]
+        log.info('Init loop counter at %s' % loop_name)
+        self.loop_counters[loop_name] = 0
+        self.check_loop_name(loop_name)
+            
+    def consume_loop_counter_inc_stub(self, frame, event, arg):
+        log.info('Consuming loop_counter_inc call event')
+        loop_name = inspect.getargvalues(frame)[0]
+        log.info('Increasing loop counter at %s' % loop_name)
+        self.loop_counters[loop_name] += 1
+        self.check_loop_name(loop_name)
+        
+    def consume_loop_counter_clear_stub(self, frame, event, arg):
+        log.info('Consume loop_counter_clear call event')
+        loop_name = inspect.getargvalues(frame)[0]
+        log.info('Clearing loop counter at %s' % loop_name)
+        self.loop_counters[loop_name] = 0
+        self.ignored_loops.discard(loop_name)
+>>>>>>> Stashed changes
 
     def setup(self):
         log.info('Setting up tracing function')
@@ -517,10 +574,13 @@ class DynamicDataTracer(object):
     def clear(self):
         log.info('Clear internal state of tracer')
         self.file_path = None
+        self.src_lines = []
         self.trace_events = []
         self.trace_errors = []
         self.event_counter = 0
         self.traced_stack_depth = 0
+        self.watch_frame = None
+        self.ignored_loops = set([])
 
     def run(self, file_path):
         log.info('Running tracer')
@@ -567,8 +627,8 @@ class DynamicDataTracer(object):
 
 def main(args):
     src = open(args.input_path).read()
-    tracer = DynamicDataTracer()
-    tracer.run(src)
+    tracer = DynamicDataTracer(loop_bound=args.loop_bound)
+    tracer.run(src, loop_bound=args.bound)
     with open(args.output_path, 'wb') as f:
         pickle.dump(tracer, f)
 
@@ -586,6 +646,7 @@ if __name__ == '__main__':
     parser.add_argument('input_path', type=str, help='Path to lifted source')
     parser.add_argument('output_path', type=str, help='Path for pickled tracer with results')
     parser.add_argument('-l', '--log', type=str, help='Path for logging file (slows down tracing significantly)')
+    parser.add_argument('-b', '--bound', type=int, help='Loop bound for tracing')
     args = parser.parse_args()
     log = setup_logger(args.log, logging.DEBUG) if args.log else setup_logger(None, logging.CRITICAL)
     main(args)
