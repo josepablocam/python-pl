@@ -87,7 +87,7 @@ def get_function_qual_name(obj):
         log.debug('Checking if object is frame')
         obj = get_function_obj(obj)
     try:
-        log.debug('Attempting to access __qualname__ for function object %s' % obj)
+        log.debug('Attempting to access __qualname__ for function object')
         return obj.__qualname__
     except AttributeError:
         log.warning('Function does not have __qualname__ attribute: %s' % obj)
@@ -579,6 +579,8 @@ class DynamicDataTracer(object):
         if self.loop_bound is not None and self.loop_counters.get(loop_name, 0) >= self.loop_bound:
             log.debug('Adding loop variable %s to ignored loops' % loop_name)
             self.ignored_loops.add(loop_name)
+            # turn off non essential logging
+            log.setLevel(logging.CRITICAL)
 
     def consume_loop_counter_init_stub(self, frame, event, arg):
         log.info('Consuming loop_counter_init call event')
@@ -606,6 +608,8 @@ class DynamicDataTracer(object):
         self.loop_counters[loop_name] = 0
         self.ignored_loops.discard(loop_name)
         self.pop_trace_event()
+        if not self.ignored_loops:
+            log.setLevel(LOG_LEVEL)
 
     def setup(self):
         log.info('Setting up tracing function')
@@ -712,6 +716,8 @@ def setup_logger(filename, level):
         )
     return logging.getLogger(__name__)
 
+LOG_FILE  = None
+LOG_LEVEL = logging.CRITICAL
 
 if __name__ == '__main__':
     parser = ArgumentParser(description='Execute lifted script with dynamic tracing')
@@ -720,8 +726,11 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--log', type=str, help='Path for logging file (slows down tracing significantly)')
     parser.add_argument('-b', '--loop_bound', type=int, help='Loop bound for tracing')
     args = parser.parse_args()
-    log = setup_logger(args.log, logging.DEBUG) if args.log else setup_logger(None, logging.CRITICAL)
+    if args.log:
+        LOG_LEVEL = logging.DEBUG
+        LOG_FILE = args.log
+    log = setup_logger(LOG_FILE, LOG_LEVEL)
     main(args)
 else:
-    log = setup_logger('dynamic_tracer.log', logging.CRITICAL)
+    log = setup_logger(LOG_FILE, LOG_LEVEL)
 
