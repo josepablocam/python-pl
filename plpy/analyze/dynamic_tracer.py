@@ -409,18 +409,20 @@ class DynamicDataTracer(object):
         # attribute: a.b = ... => loads(a), loads(a.b)
         # subscript: val[ix][...] = ... => loads(val)
         # slice: val[1:...] = ... => loads(val)
-        assignment_targets = []
+        lhs_nodes = []
+        rhs_nodes = []
+
         if isinstance(node, ast.Assign):
-            assignment_targets.extend(node.targets)
-            expr_node = node.value
+            rhs_nodes.append(node.value)
+            lhs_nodes.extend(node.targets)
         elif isinstance(node, ast.AugAssign):
-            assignment_targets.append(node.target)
-            expr_node = node.value
+            rhs_nodes.append(node.value)
+            rhs_nodes.append(node.target)
         else:
-            expr_node = node
+            rhs_nodes.append(node)
 
         references = []
-        for target in assignment_targets:
+        for target in lhs_nodes:
             if isinstance(target, ast.Attribute):
                 # in this case we don't want to have as a load the deepest access
                 # e.g. a.b.c = ... => load(a), load(a.b) (but not load(a.b.c))
@@ -429,7 +431,9 @@ class DynamicDataTracer(object):
                 references.extend(get_nested_references(target))
 
         # RHS of line (or original node if just expression)
-        references.extend(get_nested_references(expr_node))
+        for val_node in rhs_nodes:
+            references.extend(get_nested_references(val_node))
+
         return set(references)
 
     def get_mem_locs(self, str_references, frame):
@@ -446,7 +450,7 @@ class DynamicDataTracer(object):
             try:
                 obj = eval(ref, _globals, _locals)
                 mem_locs[ref] = id(obj)
-            except NameError:
+            except (NameError, AttributeError):
                 mem_locs[ref] = -1
         return mem_locs
 
