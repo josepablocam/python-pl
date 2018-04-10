@@ -131,6 +131,10 @@ class ExtractReferences(ast.NodeVisitor):
         self.acc.append(node)
         self.generic_visit(node)
 
+    def visit_Subscript(self, node):
+        self.acc.append(node)
+        self.generic_visit(node)
+
     def run(self, node):
         self.visit(node)
         return [astunparse.unparse(ref).strip() for ref in self.acc]
@@ -185,6 +189,8 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
                 references.extend(get_nested_references(tgt, exclude_first=False))
         else:
             references.extend(targets)
+        # always produce them in ascending order of reference string length
+        references = sorted(references)
         names_str = ','.join(['"%s"' % ref for ref in references])
         call_str = f'{self.stub_name}([{names_str}])'
         return to_ast_node(call_str)
@@ -406,8 +412,7 @@ class DynamicDataTracer(object):
 
         # assignments can trigger loads as well
         # attribute: a.b = ... => loads(a), loads(a.b)
-        # subscript: val[ix][...] = ... => loads(val)
-        # slice: val[1:...] = ... => loads(val)
+        # subscript: val[ix][...] = ... => loads(val), loads(val[ix])
         lhs_nodes = []
         rhs_nodes = []
 
@@ -422,12 +427,10 @@ class DynamicDataTracer(object):
 
         references = []
         for target in lhs_nodes:
-            if isinstance(target, ast.Attribute):
+            if isinstance(target, (ast.Attribute, ast.Subscript)):
                 # in this case we don't want to have as a load the deepest access
                 # e.g. a.b.c = ... => load(a), load(a.b) (but not load(a.b.c))
                 references.extend(get_nested_references(target, exclude_first=True))
-            if isinstance(target, (ast.Subscript, ast.Slice)):
-                references.extend(get_nested_references(target))
 
         # RHS of line (or original node if just expression)
         for val_node in rhs_nodes:

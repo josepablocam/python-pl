@@ -148,8 +148,8 @@ def test_extract_references(node_str, full_expected, all_but_first_expected):
 
 def test_register_assignment_stubs():
     stubber = dt.AddMemoryUpdateStubs('_stub')
-    src = "x = 1; y = f(); z += 1"
-    expected = "x = 1; _stub(['x']); y = f(); _stub(['y']); z += 1; _stub(['z'])"
+    src = "x = 1; y = f(); z += 1; d[1] = 2"
+    expected = "x = 1; _stub(['x']); y = f(); _stub(['y']); z += 1; _stub(['z']); d[1] = 2; _stub(['d', 'd[1]'])"
     with_stubs = stubber.visit(ast.parse(src))
     assert ast.dump(with_stubs) == ast.dump(ast.parse(expected))
 
@@ -190,16 +190,16 @@ def test_is_stub_call():
 @pytest.mark.parametrize(
     '_input,expected',
     [
-        ('a = 10',           []                   ),
-        ('a = x * 10',       ['x']                ),
-        ('a = a.b * 10',     ['a', 'a.b']         ),
-        ('a = b[0] * 10',    ['b']                ),
-        ('a = b[0][1] * 10', ['b']                ),
-        ('a = b[1:2] * 10',  ['b']                ),
-        ('a.b.c = x * 10',   ['x', 'a', 'a.b']    ),
-        ('a[0][1] = c.d[0]', ['a', 'c', 'c.d']    ),
-        ('a.b.c[0] = 10',    ['a', 'a.b', 'a.b.c']),
-        ('x = {a:1, b.c:2}',   ['a', 'b', 'b.c'])
+        ('a = 10',           []                                 ),
+        ('a = x * 10',       ['x']                              ),
+        ('a = a.b * 10',     ['a', 'a.b']                       ),
+        ('a = b[0] * 10',    ['b', 'b[0]']                      ),
+        ('a = b[0][1] * 10', ['b', 'b[0]', 'b[0][1]']           ),
+        ('a = b[1:2] * 10',  ['b', 'b[1:2]']                    ),
+        ('a.b.c = x * 10',   ['x', 'a', 'a.b']                  ),
+        ('a[0][1] = c.d[0]', ['a', 'a[0]', 'c', 'c.d', 'c.d[0]']),
+        ('a.b.c[0] = 10',    ['a', 'a.b', 'a.b.c']              ),
+        ('x = {a:1, b.c:2}', ['a', 'b', 'b.c']                  ),
     ]
 )
 def test_get_load_references_from_line(_input, expected):
@@ -505,6 +505,7 @@ def basic_case_7():
         return x * 2
     f(10)
     s.apply(f)
+    s[0] = 100
     """
 
     expected_event_checks = [
@@ -526,6 +527,8 @@ def basic_case_7():
         # note that there is no entries for the f calls inside apply
         make_event_check(check_enter_call, qualname='Series.apply', call_args=None, is_method=True),
         make_event_check(check_exit_call, co_name='apply'),
+        make_event_check(check_exec_line, line='s[0] = 100', refs_loaded=['s']),
+        make_event_check(check_memory_update, updates=['s', 's[0]']),
     ]
 
     return src, expected_event_checks
@@ -541,7 +544,7 @@ def basic_case_8():
         make_event_check(check_exec_line, line='d = {1:2, 2:3}', refs_loaded=[]),
         make_event_check(check_memory_update, updates=['d']),
         make_event_check(check_exec_line, line='d[1] = 1000', refs_loaded=['d']),
-        make_event_check(check_memory_update, updates=['d']),
+        make_event_check(check_memory_update, updates=['d', 'd[1]']),
     ]
 
     return src, expected_event_checks
