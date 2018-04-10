@@ -38,8 +38,8 @@ def get_co_name(frame):
 def get_function_obj(frame, src_lines=None, filename=None):
     # can't get function object if we don't actually
     # have the frame
-    if frame is None or frame.f_back is None:
-        log.debug('Call frame or caller frame was None')
+    if frame is None:
+        log.debug('Call frame was None, cannot retrieve function object')
         return None
     # note that this hack is based on the info
     # described in
@@ -78,7 +78,7 @@ def get_function_obj(frame, src_lines=None, filename=None):
         # this is possible if call event was triggered
         # for something like entering a class definition (when first defined)
         # or if attribute access has been defined to trigger a call (e.g. in pandas dataframes)
-        log.error('Failed to parse call', exc_info=True)
+        log.exception('Failed to parse call')
         return None
 
 def get_function_qual_name(obj):
@@ -473,7 +473,7 @@ class DynamicDataTracer(object):
 
         if is_stub_call(func_obj):
             log.info('Function object is a stub: %s' % get_co_name(frame))
-            return self.trace_stub(frame, event, arg)
+            return self.trace_stub(func_obj, frame, event, arg)
 
         log.info('Collecting call made by user for: %s' % func_obj)
         # # increase the depth of the traced stack
@@ -528,9 +528,8 @@ class DynamicDataTracer(object):
             log.info('Appending trace event: %s' % trace_event)
             self.push_trace_event(trace_event)
 
-    def trace_stub(self, frame, event, arg):
+    def trace_stub(self, stub_obj, frame, event, arg):
         log.info('Tracing stub')
-        stub_obj = get_function_obj(frame, src_lines=self.src_lines, filename=self.file_path)
         if stub_obj.__name__ != get_co_name(frame):
             # stub objects are guaranteed to have the co_name match the object name
             # if this is not the case, then this is not actually a stub
