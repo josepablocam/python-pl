@@ -31,8 +31,8 @@ class DynamicTraceToGraph(object):
         if node_id == self.unknown_id:
             self.graph.nodes[node_id]['src'] = 'UNKNOWNS: '
         else:
-            self.graph.node[node_id]['src'] = trace_event.line
-            self.graph.node[node_id]['lineno'] = trace_event.lineno
+            self.graph.nodes[node_id]['src'] = trace_event.line
+            self.graph.nodes[node_id]['lineno'] = trace_event.lineno
 
     def handle_ExecLine(self, event):
         if self.consuming:

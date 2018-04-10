@@ -11,7 +11,7 @@ setup(name='plpy',
       install_requires=[
           'astunparse==1.5.0',
           'matplotlib==2.2.2',
-          'networkx==1.11',
+          'networkx==2.1',
           'pydot==1.2.4',
           'pandas==0.22.0'
       ],
