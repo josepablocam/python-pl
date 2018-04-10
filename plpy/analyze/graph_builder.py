@@ -5,7 +5,6 @@ import pickle
 from .dynamic_tracer import DynamicDataTracer
 from .dynamic_trace_events import *
 
-GRAPH_SRC_ATTRIBUTE = 'src'
 
 class DynamicTraceToGraph(object):
     def __init__(self, ignore_unknown=False):
@@ -23,14 +22,24 @@ class DynamicTraceToGraph(object):
         self.counter += 1
         return _id
 
+    def create_and_add_node(self, node_id, trace_event):
+        self.graph.add_node(node_id)
+        # set up attributes
+        attributes = ['src', 'lineno']
+        for attr in attributes:
+            self.graph.nodes[node_id][attr] = None
+        if node_id == self.unknown_id:
+            self.graph.nodes[node_id]['src'] = 'UNKNOWNS: '
+        else:
+            self.graph.node[node_id]['src'] = trace_event.line
+            self.graph.node[node_id]['lineno'] = trace_event.lineno
+
     def handle_ExecLine(self, event):
         if self.consuming:
             return
-
+        # TODO: this currently ignores loops and allocates a new node per statement executed
         node_id = self.allocate_node_id()
-        self.graph.add_node(node_id)
-        self.graph.node[node_id][GRAPH_SRC_ATTRIBUTE] = event.line
-        self.lineno_to_nodeid[event.lineno] = node_id
+        self.create_and_add_node(node_id, event)
         dependencies = []
         # ignore mem locations that are unknown
         for name, ml in event.uses_mem_locs.items():
@@ -39,15 +48,16 @@ class DynamicTraceToGraph(object):
                 dependencies.append((ml_id, node_id))
 
         self.graph.add_edges_from(dependencies)
+        # set node id for this lineno
+        self.lineno_to_nodeid[event.lineno] = node_id
 
     def get_latest_node_id_for_mem_loc(self, name, mem_loc):
         if not mem_loc in self.mem_loc_to_lineno:
             # one of the unknown locations
             # create new node if needed and accumulate string for debugging when drawn
             if not self.unknown_id in self.graph.nodes:
-                self.graph.add_node(self.unknown_id)
-                self.graph.nodes[self.unknown_id][GRAPH_SRC_ATTRIBUTE] = 'UNKNOWNS: '
-            self.graph.nodes[self.unknown_id][GRAPH_SRC_ATTRIBUTE] += ('%s,' % name)
+                self.create_and_add_node(self.unknown_id, None)
+            self.graph.nodes[self.unknown_id]['src'] += ('%s,' % name)
             return self.unknown_id
         else:
             lineno = self.mem_loc_to_lineno[mem_loc]
@@ -83,7 +93,7 @@ class DynamicTraceToGraph(object):
 def draw(g, dot_layout=True):
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(1)
-    labels = nx.get_node_attributes(g, GRAPH_SRC_ATTRIBUTE)
+    labels = nx.get_node_attributes(g, 'src')
     # use better graphviz layout
     pos = nx.drawing.nx_pydot.graphviz_layout(g) if dot_layout else None
     nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
@@ -111,4 +121,8 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--draw', action='store_true', help='Draw graph and display')
     parser.add_argument('-b', '--block', action='store_true', help='Block when displaying graph')
     args = parser.parse_args()
-    main(args)
+    try:
+        main(args)
+    except:
+        import pdb
+        pdb.post_mortem()
