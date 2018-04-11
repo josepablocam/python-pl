@@ -10,6 +10,8 @@ import pickle
 import sys
 import traceback
 
+import numpy as np
+import pandas as pd
 
 from .dynamic_trace_events import *
 
@@ -33,6 +35,27 @@ def get_filename(frame):
 
 def get_co_name(frame):
     return frame.f_code.co_name
+
+# this is not quite id, but allow us to avoid
+# some issues with libraries that allocate new Python objects on accesses
+# https://stackoverflow.com/questions/49782139/pandas-dataframes-series-and-id-in-cpython
+# https://stackoverflow.com/questions/11264838/how-to-get-the-memory-address-of-a-numpy-array-for-c/11266170
+# https://docs.scipy.org/doc/numpy-1.12.0/reference/generated/numpy.ndarray.ctypes.html
+def safe_id(obj):
+    try:
+        if isinstance(obj, pd.Series):
+            # note can't call as obj.values because if uninitialized
+            # (i.e. these are args to __init__ before call executes)
+            # will result in infinite recursion due to way attribute lookups are implemented for pandas
+            return obj.__getattribute__('values').ctypes.data
+        elif isinstance(obj, np.ndarray):
+            return obj.ctypes.data
+        else:
+            return id(obj)
+    except AttributeError:
+        # uninitialized pandas objects won't have values yet
+        # when looking up values
+        return id(obj)
 
 # this is a horrendous hack... but not sure that there is a better way
 def get_function_obj(frame, src_lines=None, filename=None):
@@ -96,7 +119,7 @@ def get_function_qual_name(obj):
 def get_abstract_vals(arginfo):
     arg_names = arginfo.args
     _locals = arginfo.locals
-    return {name:id(_locals[name]) for name in arg_names}
+    return {name:safe_id(_locals[name]) for name in arg_names}
 
 # stub functions that are inserted
 # into source code to mark events for trace tracking
@@ -451,7 +474,7 @@ class DynamicDataTracer(object):
         for ref in str_references:
             try:
                 obj = eval(ref, _globals, _locals)
-                mem_locs[ref] = id(obj)
+                mem_locs[ref] = safe_id(obj)
             except (NameError, AttributeError):
                 mem_locs[ref] = -1
         return mem_locs
@@ -494,7 +517,7 @@ class DynamicDataTracer(object):
         # we keep track of the memory location of the function object
         # because it can allow us to establish a link between a line that calls
         # an function and the actual function call entry
-        mem_loc_func = id(func_obj)
+        mem_loc_func = safe_id(func_obj)
         details = dict(
             is_method          = is_method,
             co_name            = co_name,
