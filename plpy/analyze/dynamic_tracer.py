@@ -566,7 +566,7 @@ class DynamicDataTracer(object):
         # memory locations associated with those references by looking for the globals/locals in the caller frame
         memory_locations = self.get_mem_locs(names, get_caller_frame(frame))
         event_id = self._allocate_event_id()
-        trace_event = MemoryUpdate(event_id, memory_locations, lineno)
+        trace_event = MemoryUpdate(event_id, lineno, memory_locations)
         self.pop_trace_event()
         self.push_trace_event(trace_event)
 

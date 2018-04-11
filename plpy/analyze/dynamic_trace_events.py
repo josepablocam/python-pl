@@ -8,7 +8,7 @@ class MemoryUpdate(TraceEvent):
     Added to trace to update the last line assigning
     to a set of memory locations
     """
-    def __init__(self, event_id, mem_locs, lineno):
+    def __init__(self, event_id, lineno, mem_locs):
         self.event_id = event_id
         self.mem_locs = mem_locs
         self.lineno = lineno

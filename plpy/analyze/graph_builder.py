@@ -47,6 +47,7 @@ class DynamicTraceToGraph(object):
             self.graph.nodes[node_id]['src'] = trace_event.line
             self.graph.nodes[node_id]['lineno'] = trace_event.lineno
             self.graph.nodes[node_id]['event'] = trace_event
+        return self.graph.nodes[node_id]
 
     def handle_ExecLine(self, event):
         if self.consuming:
