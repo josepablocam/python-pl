@@ -38,7 +38,7 @@ class DynamicTraceToGraph(object):
     def create_and_add_node(self, node_id, trace_event):
         self.graph.add_node(node_id)
         # set up attributes
-        attributes = ['src', 'lineno', 'event', 'defs']
+        attributes = ['src', 'lineno', 'event', 'defs', 'calls']
         for attr in attributes:
             self.graph.nodes[node_id][attr] = None
         if node_id == self.unknown_id:
@@ -137,6 +137,13 @@ class DynamicTraceToGraph(object):
 
     def handle_EnterCall(self, event):
         self.consuming += [event]
+        # add call information to node associated with the stmt that triggered the call event
+        if event.lineno in self.lineno_to_nodeid:
+            node_id = self.lineno_to_nodeid[event.lineno]
+            calls = self.graph.nodes[node_id]['calls']
+            calls = [] if calls is None else calls
+            calls.append(event)
+            self.graph.nodes[node_id]['calls'] = calls
 
     def handle_ExitCall(self, event):
         self.consuming.pop()

@@ -1,7 +1,18 @@
 # Events for a dynamic trace
+import inspect
 
 class TraceEvent(object):
-    pass
+    def data(self):
+        fields = dir(self)
+        _data = {}
+        for field in fields:
+            if field.startswith('_'):
+                continue
+            obj = getattr(self, field)
+            if inspect.isfunction(obj) or inspect.ismethod(obj):
+                continue
+            _data[field] = obj
+        return _data
 
 class MemoryUpdate(TraceEvent):
     """
