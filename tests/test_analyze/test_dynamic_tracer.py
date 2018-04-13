@@ -475,7 +475,7 @@ def basic_case_6():
     expected_event_checks = [
         make_event_check(check_exec_line, line='_times = 2', refs_loaded=[]),
         make_event_check(check_memory_update, updates=['_times']),
-        make_event_check(check_exec_line, line='mult(10)', refs_loaded=['mult']),
+        make_event_check(check_exec_line, line='mult(10)', refs_loaded=['mult', '_times']), #_times loaded indirectly by mult call
         make_event_check(check_enter_call, qualname='mult', call_args=['x'], is_method=False),
         make_event_check(check_exec_line, line='return x * _times', refs_loaded=['x', '_times']),
         make_event_check(check_exit_call, co_name='mult'),
@@ -515,7 +515,7 @@ def basic_case_7():
         make_event_check(check_enter_call, qualname='Series', call_args=None, is_method=False),
         make_event_check(check_exit_call, co_name='__init__'),
         make_event_check(check_memory_update, updates=['s']),
-        make_event_check(check_exec_line, line='f(10)', refs_loaded=['f']),
+        make_event_check(check_exec_line, line='f(10)', refs_loaded=['f', 'g']), # g loaded indirectly by f
         make_event_check(check_enter_call, qualname='f', call_args=['x'], is_method=False),
         make_event_check(check_exec_line, line='g()', refs_loaded=['g']),
         make_event_check(check_enter_call, qualname='g', call_args=[], is_method=False),
@@ -523,7 +523,7 @@ def basic_case_7():
         make_event_check(check_exit_call, co_name='g'),
         make_event_check(check_exec_line, line='return x * 2', refs_loaded=['x']),
         make_event_check(check_exit_call, co_name='f'),
-        make_event_check(check_exec_line, line='s.apply(f)', refs_loaded=['s', 's.apply', 'f']),
+        make_event_check(check_exec_line, line='s.apply(f)', refs_loaded=['s', 's.apply', 'f', 'g']), # g loaded indirectly by f
         # note that there is no entries for the f calls inside apply
         make_event_check(check_enter_call, qualname='Series.apply', call_args=None, is_method=True),
         make_event_check(check_exit_call, co_name='apply'),
@@ -592,6 +592,39 @@ def basic_case_9():
     ]
     return src, expected_event_checks, loop_bound
 
+
+# use a global variables in user function that is called from third party function
+def basic_case_10():
+    src = """
+        import pandas as pd
+        df = pd.DataFrame([(1, 2), (3, 4)], columns=['c1', 'c2'])
+
+        extra = 10
+        other_extra = 100
+
+        def g(y):
+            return other_extra
+
+        # dependency on global extra
+        def add(x):
+            return g(x) + extra
+
+        df['c2'].apply(add)
+    """
+
+    # line, memupdate, line, call, return, memupdate, line, memupdate, line, memupdate
+    expected_event_checks = [make_event_check(check_ignore)] * 10
+    expected_event_checks += [
+        # note that extra is also implicitly loaded as it is used by add. add is called inside apply, which we don't instrument, so
+        # we add it at the ExecLine event
+        # so the indirect references are: extra, g, other_extra
+        make_event_check(check_exec_line, line="df['c2'].apply(add)", refs_loaded=['df', "df['c2']", "df['c2'].apply", 'add', 'extra', 'g', 'other_extra'])
+    ]
+    # call, return
+    expected_event_checks += [make_event_check(check_ignore)] * 2
+    return src, expected_event_checks
+
+
 basic_cases = [
     basic_case_1,
     basic_case_2,
@@ -602,6 +635,7 @@ basic_cases = [
     basic_case_7,
     basic_case_8,
     basic_case_9,
+    basic_case_10,
 ]
 
 @pytest.mark.parametrize('_input_fun', basic_cases)

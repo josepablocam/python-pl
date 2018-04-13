@@ -418,7 +418,7 @@ class DynamicDataTracer(object):
             for l in lines:
                 load_references.extend(self.get_load_references_from_line(l))
             # using the load references, get the memory locations
-            load_mem_locs = self.get_mem_locs(load_references, frame)
+            load_mem_locs = self.get_mem_locs(load_references, frame, include_global_references=True)
             # associate all these with the initial line/lineno and store the event
             trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
             log.info('Appending trace event: %s' % trace_event)
@@ -461,7 +461,7 @@ class DynamicDataTracer(object):
 
         return set(references)
 
-    def get_mem_locs(self, str_references, frame):
+    def get_mem_locs(self, str_references, frame, include_global_references=False):
         """
         Load the memory locations for these references using the environment
         available to the frame provided
@@ -475,9 +475,54 @@ class DynamicDataTracer(object):
             try:
                 obj = eval(ref, _globals, _locals)
                 mem_locs[ref] = safe_id(obj)
+                # we can extend with global references where relevant
+                if include_global_references and (inspect.isfunction(obj) or inspect.ismethod(obj)):
+                    global_locs = self.get_globals_mem_locs_in_user_defined_function(frame, obj)
+                    mem_locs.update(global_locs)
             except (NameError, AttributeError):
                 mem_locs[ref] = -1
         return mem_locs
+
+    def get_globals_mem_locs_in_user_defined_function(self, frame, obj):
+        if obj.__code__.co_filename != self.file_path:
+            return {}
+        else:
+            # given static scoping in Python
+            # we can check global vars based on the caller for the current
+            # frame and get memory locations for any nested global references
+            _globals = frame.f_globals
+            _locals = frame.f_locals
+            global_refs = [obj]
+            mem_locs = {}
+            while global_refs:
+                curr_ref = global_refs.pop()
+                try:
+                    code = curr_ref.__code__
+                except AttributeError:
+                    continue
+                # global references
+                for var in code.co_names:
+                    try:
+                        var_obj = eval(var, _globals, _locals)
+                        is_func = inspect.isfunction(var_obj) or inspect.ismethod(var_obj)
+
+                        # ignore anything coming from tracer
+                        if is_func and var_obj.__code__.co_filename == __file__:
+                            continue
+
+                        # for classes, look at the constructor
+                        if inspect.isclass(var_obj):
+                            var_obj = var_obj.__init__
+
+                        mem_locs[var] = safe_id(var_obj)
+                        # search recursively inside user functions/methods
+                        if is_func and var_obj.__code__.co_filename == self.file_path:
+                            global_refs.append(var_obj)
+
+                    except (NameError, AttributeError):
+                        pass
+            return mem_locs
+
 
     def trace_call(self, frame, event, arg):
         log.info('Trace call (co_name=%s)' % get_co_name(frame))
