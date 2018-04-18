@@ -238,7 +238,7 @@ def standardize_source(src):
 
 def check_memory_update(event, updates):
     assert isinstance(event, MemoryUpdate)
-    assert set(event.mem_locs.keys()) == set(updates)
+    assert set(d.name for d in event.defs) == set(updates)
 
 def check_exec_line(event, line, refs_loaded):
     assert isinstance(event, ExecLine)
@@ -247,13 +247,16 @@ def check_exec_line(event, line, refs_loaded):
     except SyntaxError:
         # somethings such as with... can't parse as asingle line
         assert event.line.strip() == line.strip()
-    assert set(event.uses_mem_locs.keys()) == set(refs_loaded)
+    uses = set(u.name for u in event.uses)
+    assert uses == set(refs_loaded)
 
 def check_enter_call(event, qualname, call_args, is_method):
     assert isinstance(event, EnterCall)
     assert event.details['qualname'] == qualname
     if call_args is not None:
-        assert set(event.details['abstract_call_args'].keys()) == set(call_args)
+        abstract_call_args = event.details['abstract_call_args']
+        abstract_call_args_names = set(a.name for a in abstract_call_args)
+        assert abstract_call_args_names == set(call_args)
     assert event.details['is_method'] == is_method
 
 def check_exit_call(event, co_name):

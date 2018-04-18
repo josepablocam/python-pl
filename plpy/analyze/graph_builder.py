@@ -56,9 +56,9 @@ class DynamicTraceToGraph(object):
         node_id = self.allocate_node_id()
         self.create_and_add_node(node_id, event)
         dependencies = []
-        for name, ml in event.uses_mem_locs.items():
-            if (not self.ignore_unknown) or ml in self.mem_loc_to_lineno:
-                ml_id = self.get_latest_node_id_for_mem_loc(name, ml)
+        for var in event.uses:
+            if (not self.ignore_unknown) or var.id in self.mem_loc_to_lineno:
+                ml_id = self.get_latest_node_id_for_mem_loc(var.name, var.id)
                 dependencies.append((ml_id, node_id))
 
         self.graph.add_edges_from(dependencies)
@@ -78,32 +78,32 @@ class DynamicTraceToGraph(object):
             return self.lineno_to_nodeid[lineno]
 
     @staticmethod
-    def refine_ignore_base(mem_locs_dict):
+    def refine_ignore_base(_vars):
         """
         ignore base memory update for references to 'containers'
         """
         bases = set([])
-        for name in mem_locs_dict.keys():
-            ast_node_name = to_ast_node(name)
+        for var in _vars:
+            ast_node_name = to_ast_node(var.name)
             refs = get_nested_references(ast_node_name, exclude_first=True)
             refs = sorted(refs, key=len)
             if refs:
                 bases.add(refs[0])
-        return {k:v for k, v in mem_locs_dict.items() if not k in bases}
+        return [var for var in _vars if not var.name in bases]
 
     @staticmethod
-    def refine_most_specific(mem_locs_dict):
+    def refine_most_specific(_vars):
         """
         ignore all but the most specific memory update for references to 'containers'
         """
         nested_references = set([])
-        for name in mem_locs_dict.keys():
-            ast_node_name = to_ast_node(name)
+        for var in _vars:
+            ast_node_name = to_ast_node(var.name)
             refs = get_nested_references(ast_node_name, exclude_first=True)
             nested_references.update(refs)
-        return {k:v for k, v in mem_locs_dict.items() if not k in nested_references}
+        return [var for var in _vars if not var.name in nested_references]
 
-    def refine_memory_updates(self, mem_locs_dict):
+    def refine_memory_updates(self, _vars):
         # refine memory locations according to a specific strategy
         # this refinement is purely syntactic
         # doing this based on actual memory addresses isn't really feasible
@@ -116,24 +116,24 @@ class DynamicTraceToGraph(object):
         # all this to say: inferring related objects from memory addresses hardly
         # seems bulletproof, so might as well just do syntactically
         if self.memory_refinement == MemoryRefinementStrategy.INCLUDE_ALL:
-            return mem_locs_dict
+            return _vars
         elif self.memory_refinement == MemoryRefinementStrategy.IGNORE_BASE:
-            return self.refine_ignore_base(mem_locs_dict)
+            return self.refine_ignore_base(_vars)
         elif self.memory_refinement == MemoryRefinementStrategy.MOST_SPECIFIC:
-            return self.refine_most_specific(mem_locs_dict)
+            return self.refine_most_specific(_vars)
         else:
             raise Exception("Invalid memory refinement strategy: %s" % self.memory_refinement)
 
     def handle_MemoryUpdate(self, event):
         if self.consuming:
             return
-        mem_locs = dict(event.mem_locs)
-        mem_locs = self.refine_memory_updates(mem_locs)
-        for name, mem_loc in mem_locs.items():
-            self.mem_loc_to_lineno[mem_loc] = event.lineno
-            # add these mem_locs to the line node that created them
+        defs = list(event.defs)
+        defs = self.refine_memory_updates(defs)
+        for d in defs:
+            self.mem_loc_to_lineno[d.id] = event.lineno
+            # add these defs to the line node that created them
             line_node_id = self.lineno_to_nodeid[event.lineno]
-            self.graph.nodes[line_node_id]['defs'] = mem_locs
+            self.graph.nodes[line_node_id]['defs'] = defs
 
     def handle_EnterCall(self, event):
         self.consuming += [event]

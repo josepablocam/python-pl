@@ -2,7 +2,7 @@ import pytest
 import textwrap
 
 from plpy.analyze import graph_builder as gb
-from plpy.analyze.dynamic_trace_events import ExecLine, MemoryUpdate
+from plpy.analyze.dynamic_trace_events import ExecLine, MemoryUpdate, Variable
 from plpy.analyze.dynamic_tracer import DynamicDataTracer
 
 
@@ -13,7 +13,7 @@ def test_create_node():
         if attr != 'src':
             assert val is None, 'Unknown node has no attributes except src'
 
-    dummy_event = ExecLine(event_id=1, lineno=1, line='test code', uses_mem_locs={'val':10})
+    dummy_event = ExecLine(event_id=1, lineno=1, line='test code', uses=[Variable('val', 10, int.__name__)])
     dummy_node = grapher.create_and_add_node(10, dummy_event)
     assert dummy_node['lineno'] == dummy_event.lineno
     assert dummy_node['src'] == dummy_event.line
@@ -36,19 +36,16 @@ def exists_edge(graph, lineno_from, lineno_to):
     expected_edge = (get_node_id_by_line(l) for l in expected_edge)
     assert tuple(expected_edge) in graph.edges
 
-
-
-
 def test_basic_graph():
     # x = 1
     # y = 2
     # x + y
     basic_trace_events = [
-        ExecLine(event_id=1, lineno=1, line='x = 1', uses_mem_locs = {}),
-        MemoryUpdate(event_id=2, lineno=1, mem_locs={'x': 1}),
-        ExecLine(event_id=3, lineno=2, line='y = 1', uses_mem_locs = {}),
-        MemoryUpdate(event_id=4, lineno=2, mem_locs={'y': 2}),
-        ExecLine(event_id=5, lineno=3, line='x + y', uses_mem_locs={'x':1, 'y': 2})
+        ExecLine(event_id=1, lineno=1, line='x = 1', uses=[]),
+        MemoryUpdate(event_id=2, lineno=1, defs=[Variable('x', 1, int.__name__)]),
+        ExecLine(event_id=3, lineno=2, line='y = 1', uses=[]),
+        MemoryUpdate(event_id=4, lineno=2, defs=[Variable('y', 2, int.__name__)]),
+        ExecLine(event_id=5, lineno=3, line='x + y', uses=[Variable('x', 1, int.__name__), Variable('y', 2, int.__name__)]),
     ]
     basic_tracer = DynamicDataTracer()
     basic_tracer.trace_events = basic_trace_events

@@ -19,21 +19,43 @@ class MemoryUpdate(TraceEvent):
     Added to trace to update the last line assigning
     to a set of memory locations
     """
-    def __init__(self, event_id, lineno, mem_locs):
+    def __init__(self, event_id, lineno, defs):
         self.event_id = event_id
-        self.mem_locs = mem_locs
+        self.defs = list(defs)
         self.lineno = lineno
         self.line = None
 
     def __str__(self):
-        return 'mem-update(%s)' % self.mem_locs
+        return 'mem-update(%s)' % self.defs
+
+class Variable(object):
+    def __init__(self, name, _id, _type):
+        self.name = name
+        self.id = _id
+        # really type.__name__ to pickle w/o issues
+        self.type = _type
+
+    def __eq__(self, other):
+        if not isinstance(other, Variable):
+            return False
+        return (self.name, self.id) == (other.name, other.id)
+
+    def __hash__(self):
+        return hash((self.name, self.id))
+
+    def __str__(self):
+        return f'{self.name}: {self.type} @ {self.id}'
+
+    def __repr__(self):
+        return str(self)
 
 class ExecLine(TraceEvent):
-    def __init__(self, event_id, lineno, line, uses_mem_locs):
+    def __init__(self, event_id, lineno, line, uses):
         self.event_id = event_id
         self.lineno = lineno
         self.line = line
-        self.uses_mem_locs = uses_mem_locs
+        self.uses = list(uses)
+        self.defs = []
 
     def __str__(self):
         return 'exec line: %s (line=%d)' % (self.line, self.lineno)

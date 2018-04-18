@@ -3,6 +3,7 @@
 from argparse import ArgumentParser
 import ast
 import astunparse
+import copy
 import inspect
 import logging
 import os
@@ -116,10 +117,17 @@ def get_function_qual_name(obj):
         log.warning('Function does not have __qualname__ attribute: %s' % obj)
         return None
 
+def get_type_name(val):
+    try:
+        return type(val).__name__
+    except AttributeError:
+        return None
+
 def get_abstract_vals(arginfo):
     arg_names = arginfo.args
     _locals = arginfo.locals
-    return {name:safe_id(_locals[name]) for name in arg_names}
+    info = [Variable(name, safe_id(_locals[name]), get_type_name(_locals[name])) for name in arg_names]
+    return info
 
 # stub functions that are inserted
 # into source code to mark events for trace tracking
@@ -382,7 +390,8 @@ class DynamicDataTracer(object):
 
     def pop_trace_event(self):
         if not self.ignored_loops:
-            self.trace_events.pop()
+            return self.trace_events.pop()
+        return None
 
     def convert_with_items_to_lines(self, line):
         log.info('Converting with-statement items to separate lines for tracer')
@@ -418,9 +427,9 @@ class DynamicDataTracer(object):
             for l in lines:
                 load_references.extend(self.get_load_references_from_line(l))
             # using the load references, get the memory locations
-            load_mem_locs = self.get_mem_locs(load_references, frame, include_global_references=True)
+            uses = self.get_mem_locs(load_references, frame, include_global_references=True)
             # associate all these with the initial line/lineno and store the event
-            trace_event = ExecLine(event_id, inspect.getlineno(frame), line, load_mem_locs)
+            trace_event = ExecLine(event_id, inspect.getlineno(frame), line, uses)
             log.info('Appending trace event: %s' % trace_event)
             self.push_trace_event(trace_event)
         except SyntaxError:
@@ -470,17 +479,20 @@ class DynamicDataTracer(object):
 
         _locals = frame.f_locals
         _globals = frame.f_globals
-        mem_locs = {}
+        mem_locs = set([])
         for ref in str_references:
             try:
                 obj = eval(ref, _globals, _locals)
-                mem_locs[ref] = safe_id(obj)
+                var = Variable(ref, safe_id(obj), get_type_name(obj))
+                mem_locs.add(var)
+
                 # we can extend with global references where relevant
                 if include_global_references and (inspect.isfunction(obj) or inspect.ismethod(obj)):
                     global_locs = self.get_globals_mem_locs_in_user_defined_function(frame, obj)
                     mem_locs.update(global_locs)
             except (NameError, AttributeError):
-                mem_locs[ref] = -1
+                var = Variable(ref, None, None)
+                mem_locs.add(var)
         return mem_locs
 
     def get_globals_mem_locs_in_user_defined_function(self, frame, obj):
@@ -493,7 +505,7 @@ class DynamicDataTracer(object):
             _globals = frame.f_globals
             _locals = frame.f_locals
             global_refs = [obj]
-            mem_locs = {}
+            mem_locs = set([])
             while global_refs:
                 curr_ref = global_refs.pop()
                 try:
@@ -514,7 +526,9 @@ class DynamicDataTracer(object):
                         if inspect.isclass(var_obj):
                             var_obj = var_obj.__init__
 
-                        mem_locs[var] = safe_id(var_obj)
+                        summary = Variable(var, safe_id(var_obj), get_type_name(var_obj))
+                        mem_locs.add(summary)
+
                         # search recursively inside user functions/methods
                         if is_func and var_obj.__code__.co_filename == self.file_path:
                             global_refs.append(var_obj)
@@ -632,10 +646,15 @@ class DynamicDataTracer(object):
         # memory locations that need to be updated
         names = arginfo.locals[arginfo.args[0]]
         # memory locations associated with those references by looking for the globals/locals in the caller frame
-        memory_locations = self.get_mem_locs(names, get_caller_frame(frame))
+        defs = self.get_mem_locs(names, get_caller_frame(frame))
         event_id = self._allocate_event_id()
-        trace_event = MemoryUpdate(event_id, lineno, memory_locations)
+        trace_event = MemoryUpdate(event_id, lineno, defs)
         self.pop_trace_event()
+        # # we should add the defs from memory update to execline before it
+        # line_event = self.pop_trace_event()
+        # if line_event is not None:
+        #     line_event.defs = copy.deepcopy(defs)
+        #     self.push_trace_event(line_event)
         self.push_trace_event(trace_event)
 
     def check_loop_name(self, loop_name):
