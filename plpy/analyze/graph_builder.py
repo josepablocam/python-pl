@@ -38,7 +38,7 @@ class DynamicTraceToGraph(object):
     def create_and_add_node(self, node_id, trace_event):
         self.graph.add_node(node_id)
         # set up attributes
-        attributes = ['src', 'lineno', 'event', 'defs', 'calls']
+        attributes = ['src', 'lineno', 'event', 'defs', 'calls', 'uses']
         for attr in attributes:
             self.graph.nodes[node_id][attr] = None
         if node_id == self.unknown_id:
@@ -55,6 +55,7 @@ class DynamicTraceToGraph(object):
         # TODO: this currently ignores loops and allocates a new node per statement executed
         node_id = self.allocate_node_id()
         self.create_and_add_node(node_id, event)
+        self.graph.nodes[node_id]['uses'] = event.uses
         dependencies = []
         for var in event.uses:
             if (not self.ignore_unknown) or var.id in self.mem_loc_to_lineno:
@@ -131,9 +132,9 @@ class DynamicTraceToGraph(object):
         defs = self.refine_memory_updates(defs)
         for d in defs:
             self.mem_loc_to_lineno[d.id] = event.lineno
-            # add these defs to the line node that created them
-            line_node_id = self.lineno_to_nodeid[event.lineno]
-            self.graph.nodes[line_node_id]['defs'] = defs
+        # add these defs to the line node that created them
+        line_node_id = self.lineno_to_nodeid[event.lineno]
+        self.graph.nodes[line_node_id]['defs'] = defs
 
     def handle_EnterCall(self, event):
         self.consuming += [event]
