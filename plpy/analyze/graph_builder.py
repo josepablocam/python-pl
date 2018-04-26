@@ -38,7 +38,7 @@ class DynamicTraceToGraph(object):
     def create_and_add_node(self, node_id, trace_event):
         self.graph.add_node(node_id)
         # set up attributes
-        attributes = ['src', 'lineno', 'event', 'defs', 'calls', 'uses']
+        attributes = ['src', 'lineno', 'event', 'complete_defs', 'defs', 'calls', 'uses']
         for attr in attributes:
             self.graph.nodes[node_id][attr] = None
         if node_id == self.unknown_id:
@@ -117,11 +117,11 @@ class DynamicTraceToGraph(object):
         # all this to say: inferring related objects from memory addresses hardly
         # seems bulletproof, so might as well just do syntactically
         if self.memory_refinement == MemoryRefinementStrategy.INCLUDE_ALL:
-            return _vars
+            return _vars, _vars
         elif self.memory_refinement == MemoryRefinementStrategy.IGNORE_BASE:
-            return self.refine_ignore_base(_vars)
+            return _vars, self.refine_ignore_base(_vars)
         elif self.memory_refinement == MemoryRefinementStrategy.MOST_SPECIFIC:
-            return self.refine_most_specific(_vars)
+            return _vars, self.refine_most_specific(_vars)
         else:
             raise Exception("Invalid memory refinement strategy: %s" % self.memory_refinement)
 
@@ -129,12 +129,15 @@ class DynamicTraceToGraph(object):
         if self.consuming:
             return
         defs = list(event.defs)
-        defs = self.refine_memory_updates(defs)
+        # complete defs maintain all information
+        # but edges in the graph are only built off of defs
+        complete_defs, defs = self.refine_memory_updates(defs)
         for d in defs:
             self.mem_loc_to_lineno[d.id] = event.lineno
         # add these defs to the line node that created them
         line_node_id = self.lineno_to_nodeid[event.lineno]
         self.graph.nodes[line_node_id]['defs'] = defs
+        self.graph.nodes[line_node_id]['complete_defs'] = complete_defs
 
     def handle_EnterCall(self, event):
         self.consuming += [event]
