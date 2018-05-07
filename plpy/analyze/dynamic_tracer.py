@@ -117,6 +117,17 @@ def get_function_qual_name(obj):
         log.warning('Function does not have __qualname__ attribute: %s' % obj)
         return None
 
+def get_function_module(obj):
+    if inspect.isframe(obj):
+        log.debug('Object is stack frame')
+        obj = get_function_obj(obj)
+    try:
+        log.debug('Attempting to access __module__ for function object')
+        return obj.__module__
+    except AttributeError:
+        log.warning('Function does not have __module__ attribute')
+        return None
+
 def get_type_name(val):
     try:
         return type(val).__name__
@@ -571,6 +582,7 @@ class DynamicDataTracer(object):
         is_method = inspect.ismethod(func_obj)
         co_name = get_co_name(frame)
         qualname = get_function_qual_name(func_obj)
+        module = get_function_module(func_obj)
         call_args = inspect.getargvalues(frame)
         abstract_call_args = get_abstract_vals(call_args)
         # we keep track of the memory location of the function object
@@ -581,6 +593,7 @@ class DynamicDataTracer(object):
             is_method          = is_method,
             co_name            = co_name,
             qualname           = qualname,
+            module             = module,
             abstract_call_args = abstract_call_args,
             mem_loc_func       = mem_loc_func,
             called_by_user     = self._called_by_user(frame),
@@ -817,4 +830,3 @@ if __name__ == '__main__':
     main(args)
 else:
     log = setup_logger(LOG_FILE, LOG_LEVEL)
-
