@@ -390,6 +390,7 @@ class DynamicDataTracer(object):
 
         except Exception as err:
             log.exception("Exception raised by tracer code")
+            self.add_exception_event(traceback.format_exc())
             self.shutdown()
 
     # events can only be pushed or popped from
@@ -504,6 +505,9 @@ class DynamicDataTracer(object):
             except (NameError, AttributeError):
                 var = Variable(ref, None, None)
                 mem_locs.add(var)
+            except:
+                # we can't do anything here, so may as well just continue
+                pass
         return mem_locs
 
     def get_globals_mem_locs_in_user_defined_function(self, frame, obj):
@@ -787,11 +791,13 @@ class DynamicDataTracer(object):
             # https://stackoverflow.com/questions/39647566/why-does-python-3-exec-fail-when-specifying-locals
             # otherwise we don't get the correct scope for exec
             exec(compiled, _globals)
-        except Exception as err:
+        except:
+            # don't just catch Exception, may have other errors
             self.shutdown()
             log.exception('Error during script execution')
-            self.add_exception_event(traceback.format_exc())
-            raise err
+            exception_triplet = sys.exc_info()
+            self.add_exception_event(traceback.format_exception(*exception_triplet))
+            raise exception_triplet[1]
         finally:
             self.watch_frame = None
             self.shutdown()
