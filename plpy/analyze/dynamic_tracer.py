@@ -159,6 +159,10 @@ STUBS = [memory_update_stub, loop_counter_init_stub, loop_counter_incr_stub, loo
 def is_stub_call(func_obj):
     return func_obj in STUBS
 
+def is_comprehension(frame):
+    comps = set(['<listcomp>', '<setcomp>', '<dictcomp>'])
+    return frame.f_code.co_name in comps
+
 class ExtractReferences(ast.NodeVisitor):
     """
     Extract nested names and attributes references.
@@ -378,6 +382,12 @@ class DynamicDataTracer(object):
                     log.info('Call for code not defined by user')
                     log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
                     log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
+
+            # don't record info inside a comprehension
+            # this way we only get the initial line event
+            # but EnterCall, body, ExitCall are not recorded
+            if is_comprehension(frame):
+                return self.trace
 
             if event == 'call':
                 return self.trace_call(frame, event, arg)

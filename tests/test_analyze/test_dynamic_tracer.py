@@ -567,6 +567,9 @@ def basic_case_9():
 
     a = A(1)
     a.v += 1
+
+    [x for x in range(10)]
+    {x for x in range(10)}
     """
     loop_bound = 2
     expected_event_checks = [
@@ -592,6 +595,8 @@ def basic_case_9():
         make_event_check(check_ignore), # memory update
         make_event_check(check_exec_line, line='a.v += 1', refs_loaded=['a', 'a.v']),
         make_event_check(check_memory_update, updates=['a', 'a.v']),
+        make_event_check(check_exec_line, line='[x for x in range(10)]', refs_loaded=['x', 'range']),
+        make_event_check(check_exec_line, line='{x for x in range(10)}', refs_loaded=['x', 'range']),
     ]
     return src, expected_event_checks, loop_bound
 
@@ -633,6 +638,27 @@ def basic_case_11():
     expected_event_checks = []
     return src, expected_event_checks
 
+# use of comprehensions
+def basic_case_12():
+    src = """
+    [a for a in range(3)]
+    {a for a in range(4)}
+    d = {'a':'b', 'c':'d'}
+    { k:v for k, v in d.items()}
+    """
+    expected_event_checks = [
+        make_event_check(check_exec_line, line='[a for a in range(3)]', refs_loaded=['range', 'a']),
+        make_event_check(check_exec_line, line='{a for a in range(4)}', refs_loaded=['range', 'a']),
+        make_event_check(check_ignore),
+        make_event_check(check_ignore),
+        make_event_check(
+            check_exec_line,
+            line="{k:v for k, v in d.items()}",
+            refs_loaded=['k', 'v', 'd', 'd.items']
+        ),
+    ]
+    return src, expected_event_checks
+
 basic_cases = [
     basic_case_1,
     basic_case_2,
@@ -645,6 +671,7 @@ basic_cases = [
     basic_case_9,
     basic_case_10,
     basic_case_11,
+    basic_case_12,
 ]
 
 @pytest.mark.parametrize('_input_fun', basic_cases)
