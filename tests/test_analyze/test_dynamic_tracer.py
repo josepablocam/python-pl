@@ -627,6 +627,11 @@ def basic_case_10():
     expected_event_checks += [make_event_check(check_ignore)] * 2
     return src, expected_event_checks
 
+# an empty program should still work rather than crash
+def basic_case_11():
+    src = " "
+    expected_event_checks = []
+    return src, expected_event_checks
 
 basic_cases = [
     basic_case_1,
@@ -639,6 +644,7 @@ basic_cases = [
     basic_case_8,
     basic_case_9,
     basic_case_10,
+    basic_case_11,
 ]
 
 @pytest.mark.parametrize('_input_fun', basic_cases)
@@ -658,4 +664,3 @@ def test_basic_programs(_input_fun):
     assert len(tracer.trace_events) == len(expected_checks), 'The event and checks are mismatched.'
     for event, check in zip(tracer.trace_events, expected_checks):
         check(event)
-

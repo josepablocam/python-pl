@@ -437,7 +437,8 @@ class DynamicDataTracer(object):
             # using these lines, get any load references
             load_references = []
             for l in lines:
-                load_references.extend(self.get_load_references_from_line(l))
+                if len(l.strip()) > 0:
+                    load_references.extend(self.get_load_references_from_line(l))
             # using the load references, get the memory locations
             uses = self.get_mem_locs(load_references, frame, include_global_references=True)
             # associate all these with the initial line/lineno and store the event
@@ -766,6 +767,10 @@ class DynamicDataTracer(object):
         else:
             # we assume the path is actually source code
             src = file_path
+
+        if len(src.strip()) == 0:
+            # empty file
+            return
 
         # modify source code as necessary to add any stubs
         src = self.add_stubs(src)
