@@ -152,6 +152,9 @@ class DynamicTraceToGraph(object):
     def handle_ExitCall(self, event):
         self.consuming.pop()
 
+    def handle_ExceptionEvent(self, event):
+        print('Graph has an exception event, stopped processing. Saving current progress.')
+
     def run(self, tracer):
         assert isinstance(tracer, DynamicDataTracer), 'This graph builder only works for dynamic data traces'
 
@@ -160,6 +163,7 @@ class DynamicTraceToGraph(object):
             MemoryUpdate: self.handle_MemoryUpdate,
             EnterCall: self.handle_EnterCall,
             ExitCall: self.handle_ExitCall,
+            ExceptionEvent: self.handle_ExceptionEvent,
         }
         for e in tracer.trace_events:
             handlers[type(e)](e)
