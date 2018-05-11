@@ -37,6 +37,25 @@ def get_filename(frame):
 def get_co_name(frame):
     return frame.f_code.co_name
 
+def get_columns(obj):
+    try:
+        if isinstance(obj, pd.DataFrame):
+            return obj.columns.values.tolist()
+        elif isinstance(obj, pd.core.groupby.DataFrameGroupBy):
+            return get_columns(obj.obj)
+        elif isinstance(obj, pd.Series):
+            name = obj.name
+            if name is not None:
+                return [name]
+            else:
+                return None
+        elif isinstance(obj, pd.core.groupby.SeriesGroupBy):
+            return get_columns(obj.obj)
+        else:
+            return None
+    except AttributeError:
+        return None
+
 # this is not quite id, but allow us to avoid
 # some issues with libraries that allocate new Python objects on accesses
 # https://stackoverflow.com/questions/49782139/pandas-dataframes-series-and-id-in-cpython
@@ -137,7 +156,13 @@ def get_type_name(val):
 def get_abstract_vals(arginfo):
     arg_names = arginfo.args
     _locals = arginfo.locals
-    info = [Variable(name, safe_id(_locals[name]), get_type_name(_locals[name])) for name in arg_names]
+    info = []
+    for name in arg_names:
+        _var = Variable(name, safe_id(_locals[name]), get_type_name(_locals[name]))
+        cols = get_columns(_locals[name])
+        if cols is not None:
+            _var.extra['columns'] = cols
+        info.append(_var)
     return info
 
 # stub functions that are inserted
@@ -507,6 +532,9 @@ class DynamicDataTracer(object):
             try:
                 obj = eval(ref, _globals, _locals)
                 var = Variable(ref, safe_id(obj), get_type_name(obj))
+                cols = get_columns(obj)
+                if cols is not None:
+                    var.extra['columns'] = cols
                 mem_locs.add(var)
 
                 # we can extend with global references where relevant
@@ -553,6 +581,9 @@ class DynamicDataTracer(object):
                             var_obj = var_obj.__init__
 
                         summary = Variable(var, safe_id(var_obj), get_type_name(var_obj))
+                        cols = get_columns(var_obj)
+                        if cols is not None:
+                            summary.extra['columns'] = cols
                         mem_locs.add(summary)
 
                         # search recursively inside user functions/methods

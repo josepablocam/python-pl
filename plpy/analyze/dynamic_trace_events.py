@@ -34,6 +34,7 @@ class Variable(object):
         self.id = _id
         # really type.__name__ to pickle w/o issues
         self.type = _type
+        self.extra = {}
 
     def __eq__(self, other):
         if not isinstance(other, Variable):
