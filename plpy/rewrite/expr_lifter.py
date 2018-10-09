@@ -508,6 +508,13 @@ class ExpressionLifter(ast.NodeTransformer):
 def lift_expressions(src):
     return ExpressionLifter().run(src)
 
+
+def lift_source(src):
+    lifted_tree = ExpressionLifter().run(src)
+    lifted_src = unparse(lifted_tree)
+    return lifted_src
+
+
 def main(args):
     src = open(args.input_path, 'r').read()
     lifted_tree = lift_expressions(src)
