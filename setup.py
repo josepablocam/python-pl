@@ -9,7 +9,7 @@ setup(name='plpy',
       license='MIT',
       packages=['plpy'],
       install_requires=[
-          'astunparse==1.5.0',
+          'astunparse==1.6',
           'matplotlib==2.2.2',
           'networkx==2.1',
           'pydot==1.2.4',
