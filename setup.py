@@ -4,7 +4,7 @@ setup(
     name='plpy',
     version='0.1',
     description='Utilities for Python program analysis',
-    url='TODO',
+    url='https://github.com/josepablocam/python-pl',
     author='Jose Cambronero',
     author_email='jcamsan@mit.edu',
     license='MIT',
