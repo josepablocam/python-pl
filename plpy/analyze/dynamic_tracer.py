@@ -21,21 +21,26 @@ from .dynamic_trace_events import *
 def to_ast_node(line):
     return ast.parse(line).body[0]
 
+
 def get_lineno(frame):
     return frame.f_lineno
+
 
 def get_caller_frame(frame):
     if frame is None:
         return None
     return frame.f_back
 
+
 def get_filename(frame):
     if frame is None:
         return None
     return frame.f_code.co_filename
 
+
 def get_co_name(frame):
     return frame.f_code.co_name
+
 
 def get_columns(obj):
     try:
@@ -55,6 +60,7 @@ def get_columns(obj):
             return None
     except AttributeError:
         return None
+
 
 # this is not quite id, but allow us to avoid
 # some issues with libraries that allocate new Python objects on accesses
@@ -76,6 +82,7 @@ def safe_id(obj):
         # uninitialized pandas objects won't have values yet
         # when looking up values
         return id(obj)
+
 
 # this is a horrendous hack... but not sure that there is a better way
 def get_function_obj(frame, src_lines=None, filename=None):
@@ -124,6 +131,7 @@ def get_function_obj(frame, src_lines=None, filename=None):
         log.exception('Failed to parse call')
         return None
 
+
 def get_function_qual_name(obj):
     # relies on the function object
     if inspect.isframe(obj):
@@ -136,6 +144,7 @@ def get_function_qual_name(obj):
         log.warning('Function does not have __qualname__ attribute: %s' % obj)
         return None
 
+
 def get_function_module(obj):
     if inspect.isframe(obj):
         log.debug('Object is stack frame')
@@ -147,46 +156,61 @@ def get_function_module(obj):
         log.warning('Function does not have __module__ attribute')
         return None
 
+
 def get_type_name(val):
     try:
         return type(val).__name__
     except AttributeError:
         return None
 
+
 def get_abstract_vals(arginfo):
     arg_names = arginfo.args
     _locals = arginfo.locals
     info = []
     for name in arg_names:
-        _var = Variable(name, safe_id(_locals[name]), get_type_name(_locals[name]))
+        _var = Variable(
+            name, safe_id(_locals[name]), get_type_name(_locals[name])
+        )
         cols = get_columns(_locals[name])
         if cols is not None:
             _var.extra['columns'] = cols
         info.append(_var)
     return info
 
+
 # stub functions that are inserted
 # into source code to mark events for trace tracking
 def memory_update_stub(names):
     pass
 
+
 def loop_counter_init_stub(name):
     pass
+
 
 def loop_counter_incr_stub(name):
     pass
 
+
 def loop_counter_clear_stub(name):
     pass
 
-STUBS = [memory_update_stub, loop_counter_init_stub, loop_counter_incr_stub, loop_counter_clear_stub]
+
+STUBS = [
+    memory_update_stub, loop_counter_init_stub, loop_counter_incr_stub,
+    loop_counter_clear_stub
+]
+
 
 def is_stub_call(func_obj):
     return func_obj in STUBS
 
+
 def is_comprehension(frame):
     comps = set(['<listcomp>', '<setcomp>', '<dictcomp>'])
     return frame.f_code.co_name in comps
+
 
 class ExtractReferences(ast.NodeVisitor):
     """
@@ -226,7 +250,8 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         return node, self._create_stub_node(node.targets, treat_as_names=False)
 
     def visit_AugAssign(self, node):
-        return node, self._create_stub_node([node.target], treat_as_names=False)
+        return node, self._create_stub_node([node.target],
+                                            treat_as_names=False)
 
     def visit_Import(self, node):
         names = []
@@ -257,7 +282,9 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
         # if we don't have all the names already, extract them
         if not treat_as_names:
             for tgt in targets:
-                references.extend(get_nested_references(tgt, exclude_first=False))
+                references.extend(
+                    get_nested_references(tgt, exclude_first=False)
+                )
         else:
             references.extend(targets)
         # always produce them in ascending order of reference string length
@@ -268,7 +295,13 @@ class AddMemoryUpdateStubs(ast.NodeTransformer):
 
 
 class AddLoopCounterStubs(ast.NodeTransformer):
-    def __init__(self, init_stub_name, incr_stub_name, clear_stub_name, loop_var_format='_loop_var_%d'):
+    def __init__(
+        self,
+        init_stub_name,
+        incr_stub_name,
+        clear_stub_name,
+        loop_var_format='_loop_var_%d'
+    ):
         self.init_stub_name = init_stub_name
         self.incr_stub_name = incr_stub_name
         self.clear_stub_name = clear_stub_name
@@ -378,7 +411,8 @@ class DynamicDataTracer(object):
                     # returned to the point in the stack we wanted, so clear the watch
                     self.watch_frame = None
 
-            if not self._called_by_user(frame) and not self._called_by_tracer(frame):
+            if not self._called_by_user(frame) and not self._called_by_tracer(
+                    frame):
                 # don't instrument if we're executing code that was not called by the user or tracer itself
                 # note that it is possible for non-user code to invoke user-defined code (e.g. a lambda defined by user)
                 # so this check avoids cases where we would not instrument the body of third party library function
@@ -386,13 +420,17 @@ class DynamicDataTracer(object):
                 #
                 # look for the last frame called by the user and wait there
                 current_frame = frame
-                while current_frame and not self._called_by_user(current_frame):
+                while current_frame and not self._called_by_user(current_frame
+                                                                 ):
                     current_frame = get_caller_frame(current_frame)
                 if current_frame:
                     self.watch_frame = current_frame
                     log.info('Code not called by user or tracer')
                     log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
-                    log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
+                    log.info(
+                        'Setting as watch frame: %s' %
+                        str(inspect.getframeinfo(self.watch_frame))
+                    )
                 return None
 
             # the user can call functions they don't define (e.g. third party libraries)
@@ -400,13 +438,17 @@ class DynamicDataTracer(object):
             # in code that they defined
             if event == 'call' and not self._defined_by_user(frame):
                 current_frame = frame
-                while current_frame and not self._defined_by_user(current_frame):
+                while current_frame and not self._defined_by_user(current_frame
+                                                                  ):
                     current_frame = get_caller_frame(current_frame)
                 if current_frame:
                     self.watch_frame = current_frame
                     log.info('Call for code not defined by user')
                     log.info('At frame: %s' % str(inspect.getframeinfo(frame)))
-                    log.info('Setting as watch frame: %s' % str(inspect.getframeinfo(self.watch_frame)))
+                    log.info(
+                        'Setting as watch frame: %s' %
+                        str(inspect.getframeinfo(self.watch_frame))
+                    )
 
             # don't record info inside a comprehension
             # this way we only get the initial line event
@@ -441,7 +483,9 @@ class DynamicDataTracer(object):
         return None
 
     def convert_with_items_to_lines(self, line):
-        log.info('Converting with-statement items to separate lines for tracer')
+        log.info(
+            'Converting with-statement items to separate lines for tracer'
+        )
         # a dummy to actually parse this
         with_dummy = line + '\n\tpass'
         with_node = to_ast_node(with_dummy)
@@ -473,11 +517,17 @@ class DynamicDataTracer(object):
             load_references = []
             for l in lines:
                 if len(l.strip()) > 0:
-                    load_references.extend(self.get_load_references_from_line(l))
+                    load_references.extend(
+                        self.get_load_references_from_line(l)
+                    )
             # using the load references, get the memory locations
-            uses = self.get_mem_locs(load_references, frame, include_global_references=True)
+            uses = self.get_mem_locs(
+                load_references, frame, include_global_references=True
+            )
             # associate all these with the initial line/lineno and store the event
-            trace_event = ExecLine(event_id, inspect.getlineno(frame), line, uses)
+            trace_event = ExecLine(
+                event_id, inspect.getlineno(frame), line, uses
+            )
             log.info('Appending trace event: %s' % trace_event)
             self.push_trace_event(trace_event)
         except SyntaxError:
@@ -510,7 +560,9 @@ class DynamicDataTracer(object):
             if isinstance(target, (ast.Attribute, ast.Subscript)):
                 # in this case we don't want to have as a load the deepest access
                 # e.g. a.b.c = ... => load(a), load(a.b) (but not load(a.b.c))
-                references.extend(get_nested_references(target, exclude_first=True))
+                references.extend(
+                    get_nested_references(target, exclude_first=True)
+                )
 
         # RHS of line (or original node if just expression)
         for val_node in rhs_nodes:
@@ -518,7 +570,9 @@ class DynamicDataTracer(object):
 
         return set(references)
 
-    def get_mem_locs(self, str_references, frame, include_global_references=False):
+    def get_mem_locs(
+        self, str_references, frame, include_global_references=False
+    ):
         """
         Load the memory locations for these references using the environment
         available to the frame provided
@@ -538,8 +592,11 @@ class DynamicDataTracer(object):
                 mem_locs.add(var)
 
                 # we can extend with global references where relevant
-                if include_global_references and (inspect.isfunction(obj) or inspect.ismethod(obj)):
-                    global_locs = self.get_globals_mem_locs_in_user_defined_function(frame, obj)
+                if include_global_references and (inspect.isfunction(obj)
+                                                  or inspect.ismethod(obj)):
+                    global_locs = self.get_globals_mem_locs_in_user_defined_function(
+                        frame, obj
+                    )
                     mem_locs.update(global_locs)
             except (NameError, AttributeError):
                 var = Variable(ref, None, None)
@@ -570,7 +627,9 @@ class DynamicDataTracer(object):
                 for var in code.co_names:
                     try:
                         var_obj = eval(var, _globals, _locals)
-                        is_func = inspect.isfunction(var_obj) or inspect.ismethod(var_obj)
+                        is_func = inspect.isfunction(
+                            var_obj
+                        ) or inspect.ismethod(var_obj)
 
                         # ignore anything coming from tracer
                         if is_func and var_obj.__code__.co_filename == __file__:
@@ -580,7 +639,9 @@ class DynamicDataTracer(object):
                         if inspect.isclass(var_obj):
                             var_obj = var_obj.__init__
 
-                        summary = Variable(var, safe_id(var_obj), get_type_name(var_obj))
+                        summary = Variable(
+                            var, safe_id(var_obj), get_type_name(var_obj)
+                        )
                         cols = get_columns(var_obj)
                         if cols is not None:
                             summary.extra['columns'] = cols
@@ -594,22 +655,28 @@ class DynamicDataTracer(object):
                         pass
             return mem_locs
 
-
     def trace_call(self, frame, event, arg):
         log.info('Trace call (co_name=%s)' % get_co_name(frame))
 
         # retrieve the object for the function being called
-        func_obj = get_function_obj(frame, src_lines=self.src_lines, filename=self.file_path)
+        func_obj = get_function_obj(
+            frame, src_lines=self.src_lines, filename=self.file_path
+        )
 
         # either not a function call (e.g. entered code block)
         # or couldn't retrieve function source to get object
         if func_obj is None:
-            log.info('Function object was None for source: %s' % self._getsource(frame))
+            log.info(
+                'Function object was None for source: %s' %
+                self._getsource(frame)
+            )
             if self._defined_by_user(frame):
                 log.info('Tracing as defined by user')
                 return self.trace
             else:
-                log.info('Ignoring and treating as external since not defined by user')
+                log.info(
+                    'Ignoring and treating as external since not defined by user'
+                )
                 log.info('Function from frame: %s' % get_co_name(frame))
                 return None
 
@@ -636,17 +703,19 @@ class DynamicDataTracer(object):
         # an function and the actual function call entry
         mem_loc_func = safe_id(func_obj)
         details = dict(
-            is_method          = is_method,
-            co_name            = co_name,
-            qualname           = qualname,
-            module             = module,
-            abstract_call_args = abstract_call_args,
-            mem_loc_func       = mem_loc_func,
-            called_by_user     = self._called_by_user(frame),
-            defined_by_user    = self._defined_by_user(frame),
-            )
+            is_method=is_method,
+            co_name=co_name,
+            qualname=qualname,
+            module=module,
+            abstract_call_args=abstract_call_args,
+            mem_loc_func=mem_loc_func,
+            called_by_user=self._called_by_user(frame),
+            defined_by_user=self._defined_by_user(frame),
+        )
         event_id = self._allocate_event_id()
-        trace_event = EnterCall(event_id, call_site_lineno, call_site_line, details)
+        trace_event = EnterCall(
+            event_id, call_site_lineno, call_site_line, details
+        )
         log.info('Appending trace event: %s' % trace_event)
         self.push_trace_event(trace_event)
 
@@ -657,18 +726,22 @@ class DynamicDataTracer(object):
         # we need to make sure we are expecting a return event
         # since things like exiting a class def produces a return event
         if self.traced_stack_depth > 0:
-            log.info('Return from a user-called function: %s' % frame.f_code.co_name)
+            log.info(
+                'Return from a user-called function: %s' % frame.f_code.co_name
+            )
             self.traced_stack_depth -= 1
             caller_frame = get_caller_frame(frame)
             call_site_lineno = inspect.getlineno(caller_frame)
             call_site_line = self._getsource(caller_frame)
             details = dict(
-                co_name            = get_co_name(frame),
-                called_by_user     = self._called_by_user(frame),
-                defined_by_user    = self._defined_by_user(frame),
+                co_name=get_co_name(frame),
+                called_by_user=self._called_by_user(frame),
+                defined_by_user=self._defined_by_user(frame),
             )
             event_id = self._allocate_event_id()
-            trace_event = ExitCall(event_id, call_site_lineno, call_site_line, details)
+            trace_event = ExitCall(
+                event_id, call_site_lineno, call_site_line, details
+            )
             log.info('Appending trace event: %s' % trace_event)
             self.push_trace_event(trace_event)
 
@@ -693,7 +766,10 @@ class DynamicDataTracer(object):
         elif stub_obj == loop_counter_clear_stub:
             self.consume_loop_counter_clear_stub(frame, event, arg)
         else:
-            raise Exception("Unhandled stub qualified name: %s" % get_function_qual_name(stub_obj))
+            raise Exception(
+                "Unhandled stub qualified name: %s" %
+                get_function_qual_name(stub_obj)
+            )
 
     def consume_memory_update_stub(self, frame, event, arg):
         log.info('Consuming memory_update_stub call event')
@@ -718,7 +794,8 @@ class DynamicDataTracer(object):
 
     def check_loop_name(self, loop_name):
         # we are bounding loops and this loop has exceeded the limit set by user
-        if self.loop_bound is not None and self.loop_counters.get(loop_name, 0) >= self.loop_bound:
+        if self.loop_bound is not None and self.loop_counters.get(
+                loop_name, 0) >= self.loop_bound:
             log.debug('Adding loop variable %s to ignored loops' % loop_name)
             self.ignored_loops.add(loop_name)
             # turn off non essential logging
@@ -769,7 +846,9 @@ class DynamicDataTracer(object):
     def add_stubs(self, src):
         log.info('Adding any stubs to provided source code')
         tree = ast.parse(src)
-        ext_tree = AddMemoryUpdateStubs(stub_name=memory_update_stub.__qualname__).visit(tree)
+        ext_tree = AddMemoryUpdateStubs(
+            stub_name=memory_update_stub.__qualname__
+        ).visit(tree)
         loop_stubber = AddLoopCounterStubs(
             init_stub_name=loop_counter_init_stub.__qualname__,
             incr_stub_name=loop_counter_incr_stub.__qualname__,
@@ -842,7 +921,9 @@ class DynamicDataTracer(object):
             self.shutdown()
             log.exception('Error during script execution')
             exception_triplet = sys.exc_info()
-            self.add_exception_event(traceback.format_exception(*exception_triplet))
+            self.add_exception_event(
+                traceback.format_exception(*exception_triplet)
+            )
             raise exception_triplet[1]
         finally:
             self.watch_frame = None
@@ -857,23 +938,36 @@ def main(args):
         pickle.dump(tracer, f)
     # print(list(map(str, tracer.trace_events)))
 
+
 def setup_logger(filename, level):
     logging.basicConfig(
         filename=filename,
         level=level,
         format="%(asctime)s:%(levelname)s:%(message)s"
-        )
+    )
     return logging.getLogger(__name__)
 
-LOG_FILE  = None
+
+LOG_FILE = None
 LOG_LEVEL = logging.CRITICAL
 
 if __name__ == '__main__':
-    parser = ArgumentParser(description='Execute lifted script with dynamic tracing')
+    parser = ArgumentParser(
+        description='Execute lifted script with dynamic tracing'
+    )
     parser.add_argument('input_path', type=str, help='Path to lifted source')
-    parser.add_argument('output_path', type=str, help='Path for pickled tracer with results')
-    parser.add_argument('-l', '--log', type=str, help='Path for logging file (slows down tracing significantly)')
-    parser.add_argument('-b', '--loop_bound', type=int, help='Loop bound for tracing')
+    parser.add_argument(
+        'output_path', type=str, help='Path for pickled tracer with results'
+    )
+    parser.add_argument(
+        '-l',
+        '--log',
+        type=str,
+        help='Path for logging file (slows down tracing significantly)'
+    )
+    parser.add_argument(
+        '-b', '--loop_bound', type=int, help='Loop bound for tracing'
+    )
     args = parser.parse_args()
     if args.log:
         LOG_LEVEL = logging.DEBUG

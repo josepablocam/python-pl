@@ -19,8 +19,11 @@ class SliceRewriter(ast.NodeTransformer):
         lower_str = unparse(node.lower) if node.lower else str(None)
         upper_str = unparse(node.upper) if node.upper else str(None)
         step_str = unparse(node.step) if node.step else str(None)
-        new_node = ast.parse('slice(%s, %s, %s)' % (lower_str, upper_str, step_str)).body[0].value
+        new_node = ast.parse(
+            'slice(%s, %s, %s)' % (lower_str, upper_str, step_str)
+        ).body[0].value
         return ast.copy_location(new_node, node)
+
 
 class ExpressionLifter(ast.NodeTransformer):
     """
@@ -41,7 +44,7 @@ class ExpressionLifter(ast.NodeTransformer):
             ast.NameConstant,
             ast.Ellipsis,
             ast.Constant,
-            )
+        )
         # we ignore certain types where lifting
         # would change the semantics or complicate
         # with little benefit
@@ -63,7 +66,9 @@ class ExpressionLifter(ast.NodeTransformer):
             ast.ImportFrom,
             ast.Global,
             ast.Nonlocal,
-            ast.Pass, ast.Break, ast.Continue,
+            ast.Pass,
+            ast.Break,
+            ast.Continue,
         )
 
     def run(self, src):
@@ -349,7 +354,8 @@ class ExpressionLifter(ast.NodeTransformer):
         # just one level deep, where it
         # looks like it might be an instance method
         # don't lift, since that can make other things harder when analyzing
-        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value,
+                                                               ast.Name):
             func_nodes = self.ignore(node.func)
         else:
             func_nodes = self.lift(node.func)
@@ -522,9 +528,12 @@ def main(args):
     with open(args.output_path, 'w') as f:
         f.write(lifted_src)
 
+
 if __name__ == '__main__':
     parser = ArgumentParser(description='Expression lifter')
-    parser.add_argument('input_path', type=str, help='Path to input source file')
+    parser.add_argument(
+        'input_path', type=str, help='Path to input source file'
+    )
     parser.add_argument('output_path', type=str, help='Path to output file')
     args = parser.parse_args()
     try:

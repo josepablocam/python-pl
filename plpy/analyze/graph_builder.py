@@ -4,14 +4,15 @@ import networkx as nx
 import pickle
 import textwrap
 
-
 from .dynamic_tracer import DynamicDataTracer, get_nested_references, to_ast_node
 from .dynamic_trace_events import *
+
 
 class MemoryRefinementStrategy(Enum):
     INCLUDE_ALL = 0
     IGNORE_BASE = 1
     MOST_SPECIFIC = 2
+
 
 class DynamicTraceToGraph(object):
     def __init__(self, ignore_unknown=False, memory_refinement=0):
@@ -38,7 +39,9 @@ class DynamicTraceToGraph(object):
     def create_and_add_node(self, node_id, trace_event):
         self.graph.add_node(node_id)
         # set up attributes
-        attributes = ['src', 'lineno', 'event', 'complete_defs', 'defs', 'calls', 'uses']
+        attributes = [
+            'src', 'lineno', 'event', 'complete_defs', 'defs', 'calls', 'uses'
+        ]
         for attr in attributes:
             self.graph.nodes[node_id][attr] = None
         if node_id == self.unknown_id:
@@ -123,7 +126,10 @@ class DynamicTraceToGraph(object):
         elif self.memory_refinement == MemoryRefinementStrategy.MOST_SPECIFIC:
             return _vars, self.refine_most_specific(_vars)
         else:
-            raise Exception("Invalid memory refinement strategy: %s" % self.memory_refinement)
+            raise Exception(
+                "Invalid memory refinement strategy: %s" %
+                self.memory_refinement
+            )
 
     def handle_MemoryUpdate(self, event):
         if self.consuming:
@@ -153,10 +159,14 @@ class DynamicTraceToGraph(object):
         self.consuming.pop()
 
     def handle_ExceptionEvent(self, event):
-        print('Graph has an exception event, stopped processing. Saving current progress.')
+        print(
+            'Graph has an exception event, stopped processing. Saving current progress.'
+        )
 
     def run(self, tracer):
-        assert isinstance(tracer, DynamicDataTracer), 'This graph builder only works for dynamic data traces'
+        assert isinstance(
+            tracer, DynamicDataTracer
+        ), 'This graph builder only works for dynamic data traces'
 
         handlers = {
             ExecLine: self.handle_ExecLine,
@@ -179,10 +189,14 @@ def draw(g, dot_layout=True):
     nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
     return plt, plt.gcf()
 
+
 def main(args):
     with open(args.input_path, 'rb') as f:
         tracer = pickle.load(f)
-    builder = DynamicTraceToGraph(ignore_unknown=args.ignore_unknown, memory_refinement=args.memory_refinement)
+    builder = DynamicTraceToGraph(
+        ignore_unknown=args.ignore_unknown,
+        memory_refinement=args.memory_refinement
+    )
     graph = builder.run(tracer)
     with open(args.output_path, 'wb') as f:
         pickle.dump(graph, f)
@@ -193,22 +207,47 @@ def main(args):
         plt.savefig(plot_path)
         plt.show(block=args.block)
 
+
 if __name__ == '__main__':
-    parser = ArgumentParser(description='Build networkx graph from tracer (with events)', formatter_class=RawTextHelpFormatter)
-    parser.add_argument('input_path', type=str, help='Path to pickled tracer (with events)')
-    parser.add_argument('output_path', type=str, help='Path to store pickled networkx graph')
-    parser.add_argument('-i', '--ignore_unknown', action='store_true', help='Exclude unknown memory locations from graph')
-    parser.add_argument('-m', '--memory_refinement', type=int, help=
-    textwrap.dedent("""
+    parser = ArgumentParser(
+        description='Build networkx graph from tracer (with events)',
+        formatter_class=RawTextHelpFormatter
+    )
+    parser.add_argument(
+        'input_path', type=str, help='Path to pickled tracer (with events)'
+    )
+    parser.add_argument(
+        'output_path', type=str, help='Path to store pickled networkx graph'
+    )
+    parser.add_argument(
+        '-i',
+        '--ignore_unknown',
+        action='store_true',
+        help='Exclude unknown memory locations from graph'
+    )
+    parser.add_argument(
+        '-m',
+        '--memory_refinement',
+        type=int,
+        help=textwrap.dedent(
+            """
     0: apply all memory updates (MemoryRefinementStrategy.INCLUDE_ALL) (DEFAULT)
     1: ignore base (MemoryRefinementStrategy.IGNORE_BASE)
     2: ignore all but most specific (MemoryRefinementStrategy.MOST_SPECIFIC)
     Determined syntactically
-    """),
-    default=0
+    """
+        ),
+        default=0
     )
-    parser.add_argument('-d', '--draw', action='store_true', help='Draw graph and display')
-    parser.add_argument('-b', '--block', action='store_true', help='Block when displaying graph')
+    parser.add_argument(
+        '-d', '--draw', action='store_true', help='Draw graph and display'
+    )
+    parser.add_argument(
+        '-b',
+        '--block',
+        action='store_true',
+        help='Block when displaying graph'
+    )
     args = parser.parse_args()
 
     try:

@@ -19,11 +19,13 @@ class ControlFlowMarkers(Enum):
     TRUE_BRANCH = 2
     FALSE_BRANCH = 3
 
+
 def safe_enlist(x):
     try:
         return list(x)
     except TypeError:
         return list([x])
+
 
 class ExtractNestedReferences(ast.NodeVisitor):
     """
@@ -109,7 +111,6 @@ class DependenciesConstructor(ast.NodeVisitor):
 
     For subscripting we always associate with the source. So a[..][...][..] = 1 updates the last statement id for (a).
     """
-
     def __init__(self, assume_standalone_calls_mutate=False):
         # We should construct a graph representation using data dependencies
         # wrap it in some existing graph library
@@ -189,7 +190,8 @@ class DependenciesConstructor(ast.NodeVisitor):
         _id = self.allocate_id()
         self.graph.add_node(_id)
         self.graph.node[_id]['ast'] = node
-        self.graph.node[_id]['context'] = list(self.context) if self.context else []
+        self.graph.node[_id]['context'] = list(self.context
+                                               ) if self.context else []
         return _id
 
     def update_node_id(self, node, _id, append=False):
@@ -231,7 +233,9 @@ class DependenciesConstructor(ast.NodeVisitor):
         for target in safe_enlist(nodes):
             if extract_references:
                 references = self.extract_reference_nodes(target)
-                references = [ref for nested in references for ref, ast_depth in nested]
+                references = [
+                    ref for nested in references for ref, ast_depth in nested
+                ]
             else:
                 references = nodes
             for ref in references:
@@ -247,7 +251,9 @@ class DependenciesConstructor(ast.NodeVisitor):
             for nested_refs in load_references:
                 # sort in ascending order of ast depth, less deep references are taken if available
                 # as these correspond to more precise member access
-                sorted_refs = [r for r, _ in sorted(nested_refs, key=lambda x: x[1])]
+                sorted_refs = [
+                    r for r, _ in sorted(nested_refs, key=lambda x: x[1])
+                ]
                 # if we don't find anything, we'll just add the most specific
                 ref_to_add = sorted_refs[0]
                 for ref in sorted_refs:
@@ -345,7 +351,9 @@ class DependenciesConstructor(ast.NodeVisitor):
         self.pop_cf_dependence()
 
         outer_scope = self.pop_scope()
-        merged_scope = self.merge_scopes([outer_scope, true_scope, false_scope])
+        merged_scope = self.merge_scopes([
+            outer_scope, true_scope, false_scope
+        ])
         self.push_scope(merged_scope)
 
     def visit_While(self, node):
@@ -375,7 +383,9 @@ class DependenciesConstructor(ast.NodeVisitor):
         self.pop_cf_dependence()
 
         outer_scope = self.pop_scope()
-        merged_scope = self.merge_scopes([outer_scope, true_scope, false_scope])
+        merged_scope = self.merge_scopes([
+            outer_scope, true_scope, false_scope
+        ])
         self.push_scope(merged_scope)
 
     def visit_If(self, node):
@@ -409,7 +419,9 @@ class DependenciesConstructor(ast.NodeVisitor):
         for key in in_both:
             if key in outer_scope:
                 outer_scope.pop(key)
-        unified_scope = self.merge_scopes([outer_scope, true_scope, false_scope])
+        unified_scope = self.merge_scopes([
+            outer_scope, true_scope, false_scope
+        ])
         self.push_scope(unified_scope)
 
     def visit_With(self, node):
@@ -422,19 +434,24 @@ class DependenciesConstructor(ast.NodeVisitor):
             self.visit(stmt)
         self.pop_context()
 
+
 def build_graph(src, assume_standalone_calls_mutate=False):
-    constructor = DependenciesConstructor(assume_standalone_calls_mutate=assume_standalone_calls_mutate)
+    constructor = DependenciesConstructor(
+        assume_standalone_calls_mutate=assume_standalone_calls_mutate
+    )
     g = constructor.run(src)
     return constructor, g
+
 
 def draw(g, dot_layout=True):
     fig, ax = plt.subplots(1)
     labels = nx.get_node_attributes(g, 'ast')
-    labels = {k:unparse(v).strip() for k, v in labels.items()}
+    labels = {k: unparse(v).strip() for k, v in labels.items()}
     # use better graphviz layout
     pos = nx.drawing.nx_pydot.graphviz_layout(g) if dot_layout else None
     nx.draw(g, labels=labels, node_size=100, ax=ax, pos=pos)
     plt.show()
+
 
 def slice_graph(graph, seed, reverse):
     search_graph = graph
@@ -443,6 +460,7 @@ def slice_graph(graph, seed, reverse):
     slice_nodes = nx.dfs_preorder_nodes(search_graph, seed)
     return graph.subgraph(slice_nodes)
 
+
 def get_node_ids(graph, predicate):
     ids = []
     for _id, node_attributes in graph.nodes.items():
@@ -450,10 +468,14 @@ def get_node_ids(graph, predicate):
             ids.append(_id)
     return ids
 
+
 def slices_from_ids(graph, ids, backwards):
     return [slice_graph(graph, _id, backwards) for _id in ids]
 
+
 def slices_from_expr(graph, src, backwards):
     src_node = ast.parse(src).body[0]
-    ids = get_node_ids(graph, lambda attrs: ast.dump(attrs['ast']) == ast.dump(src_node))
+    ids = get_node_ids(
+        graph, lambda attrs: ast.dump(attrs['ast']) == ast.dump(src_node)
+    )
     return slices_from_ids(graph, ids, backwards)

@@ -1,6 +1,7 @@
 # Events for a dynamic trace
 import inspect
 
+
 class TraceEvent(object):
     def data(self):
         fields = dir(self)
@@ -13,6 +14,7 @@ class TraceEvent(object):
                 continue
             _data[field] = obj
         return _data
+
 
 class MemoryUpdate(TraceEvent):
     """
@@ -27,6 +29,7 @@ class MemoryUpdate(TraceEvent):
 
     def __str__(self):
         return 'mem-update(%s)' % self.defs
+
 
 class Variable(object):
     def __init__(self, name, _id, _type):
@@ -50,6 +53,7 @@ class Variable(object):
     def __repr__(self):
         return str(self)
 
+
 class ExecLine(TraceEvent):
     def __init__(self, event_id, lineno, line, uses):
         self.event_id = event_id
@@ -61,6 +65,7 @@ class ExecLine(TraceEvent):
     def __str__(self):
         return 'exec line: %s (line=%d)' % (self.line, self.lineno)
 
+
 class EnterCall(TraceEvent):
     def __init__(self, event_id, call_site_lineno, call_site_line, details):
         self.event_id = event_id
@@ -71,6 +76,7 @@ class EnterCall(TraceEvent):
     def __str__(self):
         return 'enter call: %s (line=%d)' % (self.line, self.lineno)
 
+
 class ExitCall(TraceEvent):
     def __init__(self, event_id, call_site_lineno, call_site_line, details):
         self.event_id = event_id
@@ -80,6 +86,7 @@ class ExitCall(TraceEvent):
 
     def __str__(self):
         return 'exit call: %s (line=%d)' % (self.line, self.lineno)
+
 
 # mainly used to mark the abnormal end of tracing
 class ExceptionEvent(TraceEvent):
