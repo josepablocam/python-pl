@@ -8,7 +8,7 @@ setup(
     author='Jose Cambronero',
     author_email='jcamsan@mit.edu',
     license='MIT',
-    packages=['plpy'],
+    packages=['plpy', 'plpy.analyze', 'plpy.rewrite'],
     install_requires=[
         'astunparse==1.6.3',
         'matplotlib==2.2.2',
