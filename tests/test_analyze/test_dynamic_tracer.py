@@ -480,7 +480,8 @@ def basic_case_3():
         make_event_check(
             check_enter_call,
             qualname='amax',
-            call_args=['a', 'axis', 'out', 'keepdims'],
+            call_args=[],
+            #call_args=['a', 'axis', 'out', 'keepdims'],
             is_method=False
         ),
         make_event_check(check_exit_call, co_name='amax'),
