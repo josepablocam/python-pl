@@ -101,7 +101,7 @@ statement and an edge is placed from statement A to B if B depends on A.
 # construct and draw a data dependency graph from the trace (block will display the graph
 # --ignore_unknown avoids drawing nodes for dependencies that are not explicitly assigned to an
 # and earlier statement (this is a bit of hack, so perhaps best to change this later)
-python -m plpy.analyze.build_graph src_trace.pkl src_graph.pkl --draw --block --ignore_unknown
+python -m plpy.analyze.graph_builder src_trace.pkl src_graph.pkl --draw --block --ignore_unknown
 ```
 
 You should see a graph like the one below:
