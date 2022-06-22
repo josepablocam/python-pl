@@ -15,7 +15,7 @@ setup(
         'networkx==2.1',
         'pydot==1.2.4',
         'pandas==0.23.4',
-        'numpy==1.14.6',
+        'numpy==1.22.0',
     ],
     setup_requires=['pytest-runner'],
     tests_require=['pytest'],
